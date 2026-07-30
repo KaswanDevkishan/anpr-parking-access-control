@@ -1,0 +1,4 @@
+plate_number,name,id,type
+1001,Alex Example,DEMO-STUDENT-001,student
+2002,Casey Sample,DEMO-STAFF-001,staff
+3003,Riley Fiction,DEMO-VISITOR-001,visitor
