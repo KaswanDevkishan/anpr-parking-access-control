@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Register from Image — ANPR Demo{% endblock %}
+{% block content %}
+<section class="narrow-page">
+  <p class="eyebrow">Image-assisted registration</p>
+  <h1>Register from image</h1>
+  <p>The image assists data entry only. Review and explicitly confirm every field
+    before a record is created.</p>
+  <form class="panel form-stack" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Vehicle or plate image<input name="vehicle_image" type="file"
+      accept=".jpg,.jpeg,.png,image/jpeg,image/png" capture="environment" required></label>
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <button type="submit">Detect and review</button>
+  </form>
+</section>
+{% endblock %}

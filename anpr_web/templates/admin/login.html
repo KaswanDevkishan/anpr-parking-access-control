@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Admin Login — ANPR Demo{% endblock %}
+{% block content %}
+<section class="narrow-page">
+  <p class="eyebrow">Restricted administration</p>
+  <h1>Admin login</h1>
+  <form class="panel form-stack" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
+    <label>Username<input name="username" required autocomplete="username"></label>
+    <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <button type="submit">Login</button>
+  </form>
+</section>
+{% endblock %}

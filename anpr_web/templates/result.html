@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ result.status }} — ANPR Demo{% endblock %}
+{% block content %}
+<section class="result-wrap">
+  <div class="result-heading">
+    <p class="eyebrow">Analysis complete</p>
+    <h1 class="{{ 'allowed' if result.status == 'ALLOWED' else 'denied' }}">{{ result.status }}</h1>
+    <p>{{ result.reason }}</p>
+    {% if checkpoint_result %}
+    <p class="checkpoint-result">
+      {{ {
+        'entry_recorded': 'Entry recorded',
+        'exit_recorded': 'Exit recorded',
+        'already_inside': 'Already inside',
+        'no_active_entry': 'No active entry found'
+      }[checkpoint_result] }}
+    </p>
+    {% endif %}
+  </div>
+  <div class="result-grid">
+    <figure>
+      <img src="{{ result.annotated_image }}" alt="Uploaded image annotated with the detected plate bounding box">
+      <figcaption>Processed in temporary storage and deleted after this request.</figcaption>
+    </figure>
+    <dl class="facts">
+      <div><dt>Detection method</dt><dd>{{ result.detection_method or '—' }}</dd></div>
+      <div><dt>OCR result</dt><dd>{% if result.ocr_text %}<code class="plate-badge">{{ result.ocr_text }}</code>{% else %}No usable number{% endif %}</dd></div>
+      <div><dt>Matched plate</dt><dd>{% if result.match %}<code class="plate-badge">{{ result.match.matched_plate }}</code>{% else %}—{% endif %}</dd></div>
+      <div><dt>Edit distance</dt><dd>{{ result.match.distance if result.match else '—' }}</dd></div>
+      <div><dt>Demo owner</dt><dd>{{ result.match.name if result.match else '—' }}</dd></div>
+      <div><dt>Vehicle category</dt><dd>{{ result.match.type|title if result.match else '—' }}</dd></div>
+    </dl>
+  </div>
+  <p class="registry-note">All registry entries and owner details shown here are synthetic demonstration records.</p>
+  {% if notification_result %}<p class="notification-result">{{ notification_result }}</p>{% endif %}
+  <a class="text-link" href="{{ url_for('web.index') }}">← Analyse another image</a>
+</section>
+{% endblock %}

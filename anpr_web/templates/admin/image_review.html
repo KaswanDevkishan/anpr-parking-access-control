@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Review Image Registration — ANPR Demo{% endblock %}
+{% block content %}
+<section class="page-intro">
+  <p class="eyebrow">Manual confirmation required</p>
+  <h1>Review registration</h1>
+  <p>No vehicle has been created. Correct the OCR result and confirm the fields.</p>
+</section>
+{% if review %}
+<div class="review-grid">
+  <figure><img src="{{ review.original_image }}" alt="Temporary original upload"><figcaption>Original image — not retained</figcaption></figure>
+  {% if review.cropped_image %}
+  <figure><img src="{{ review.cropped_image }}" alt="Detected plate crop"><figcaption>Detected crop — {{ review.detection_method }}</figcaption></figure>
+  {% endif %}
+</div>
+{% if review.error %}<div class="error" role="alert">{{ review.error }}</div>{% endif %}
+{% endif %}
+{% if errors %}<div class="error" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+<form class="panel form-stack" method="post" action="{{ url_for('web.admin_confirm_image_vehicle') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Plate number<input name="plate_number" maxlength="20" value="{{ values.plate_number }}" required></label>
+  <label>Display owner name<input name="display_name" maxlength="80" value="{{ values.display_name }}" required></label>
+  <label>Email address (optional)<input name="email" type="email" maxlength="254" value="{{ values.email or '' }}" autocomplete="email"></label>
+  <label>Category<select name="category" required>
+    <option value="">Choose category</option>
+    {% for category in categories %}<option value="{{ category }}" {% if values.category == category %}selected{% endif %}>{{ category|title }}</option>{% endfor %}
+  </select></label>
+  <label class="checkbox"><input name="is_active" type="checkbox" value="1" {% if values.is_active %}checked{% endif %}> Active</label>
+  <label class="checkbox"><input name="email_notifications_enabled" type="checkbox" value="1" {% if values.email_notifications_enabled %}checked{% endif %}> Send visit-summary emails after exit.</label>
+  <p class="privacy-note">Never infer an email from the image. Enable notifications only with consent.</p>
+  <button type="submit">Confirm and save</button>
+</form>
+{% endblock %}

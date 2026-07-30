@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard — ANPR Demo{% endblock %}
+{% block content %}
+<section class="page-intro">
+  <p class="eyebrow">Administration</p>
+  <h1>Admin Dashboard</h1>
+  <div class="action-links">
+    <a href="{{ url_for('web.admin_add_vehicle') }}">Add vehicle manually</a>
+    <a href="{{ url_for('web.admin_vehicle_from_image') }}">Register from image</a>
+    <a href="{{ url_for('web.admin_vehicle_from_camera') }}">Register with camera</a>
+    <a href="{{ url_for('web.admin_vehicles') }}">View/manage vehicles</a>
+    <a href="{{ url_for('web.admin_audit_log') }}">Audit log</a>
+  </div>
+</section>
+{% if email_warning %}<div class="config-warning" role="status">{{ email_warning }}</div>{% endif %}
+<section class="occupancy-card" aria-labelledby="occupancy-heading">
+  <h2 id="occupancy-heading">Parking occupancy</h2>
+  <p><strong>{{ occupancy.inside }}</strong> currently inside</p>
+  {% if occupancy.capacity %}
+  <p>{{ occupancy.available }} spaces available of {{ occupancy.capacity }}</p>
+  <progress value="{{ occupancy.inside if occupancy.inside < occupancy.capacity else occupancy.capacity }}" max="{{ occupancy.capacity }}">{{ occupancy.percentage }}%</progress>
+  <span>{{ occupancy.percentage }}% occupied</span>
+  {% else %}
+  <p>Capacity is not configured; no availability claim is made.</p>
+  {% endif %}
+</section>
+<section class="stats">
+  <article><strong>{{ counts.total }}</strong><span>Total</span></article>
+  <article><strong>{{ counts.active }}</strong><span>Active</span></article>
+  <article><strong>{{ counts.inactive }}</strong><span>Inactive</span></article>
+</section>
+<h2>Recently added vehicles</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Plate</th><th>Display owner</th><th>Category</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for vehicle in recent %}
+      <tr><td><code class="plate-badge">{{ vehicle.plate_number }}</code></td><td>{{ vehicle.display_name }}</td><td>{{ vehicle.category|title }}</td><td>{{ 'Active' if vehicle.is_active else 'Inactive' }}</td></tr>
+      {% else %}<tr><td colspan="4">No vehicles registered.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

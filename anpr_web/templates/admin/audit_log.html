@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Admin Audit Log — ANPR Demo{% endblock %}
+{% block content %}
+<section class="page-intro">
+  <p class="eyebrow">Administration</p>
+  <h1>Audit Log</h1>
+  <p>Administrative actions only. Secrets, raw email addresses, images, and session data are not recorded.</p>
+</section>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Occurred</th><th>Action</th><th>Target</th><th>Reference</th><th>Summary</th></tr></thead>
+    <tbody>
+      {% for record in records %}
+      <tr><td>{{ record.occurred_at }}</td><td>{{ record.action|replace('_', ' ')|title }}</td><td>{{ record.target_type|title }}</td><td><code{% if record.target_type in ('vehicle', 'visit') %} class="plate-badge"{% endif %}>{{ record.target_reference }}</code></td><td>{{ record.summary }}</td></tr>
+      {% else %}<tr><td colspan="5">No administrative actions recorded.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if pages > 1 %}
+<nav class="pagination" aria-label="Audit log pages">
+  {% for number in range(1, pages + 1) %}
+  <a {% if number == page %}aria-current="page"{% endif %} href="{{ url_for('web.admin_audit_log', page=number) }}">{{ number }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+{% endblock %}

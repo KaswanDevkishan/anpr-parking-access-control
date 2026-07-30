@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Add Vehicle — ANPR Demo{% endblock %}
+{% block content %}
+<section class="narrow-page">
+  <p class="eyebrow">Administration</p>
+  <h1>{{ 'Edit vehicle' if editing else 'Add vehicle manually' }}</h1>
+  {% include "admin/_vehicle_fields.html" %}
+</section>
+{% endblock %}

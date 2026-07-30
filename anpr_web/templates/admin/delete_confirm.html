@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Delete Vehicle — ANPR Demo{% endblock %}
+{% block content %}
+<section class="narrow-page">
+  <p class="eyebrow">Registry removal</p>
+  <h1>Remove <span class="plate-badge">{{ vehicle.plate_number }}</span>?</h1>
+  <p>Deactivation is preferred for routine access revocation. Removal permanently
+    deletes the registry record and prevents authorization and cannot be undone,
+    while historical visits and notification delivery records are retained.</p>
+  <form class="panel form-stack" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Type <code class="plate-badge">{{ vehicle.plate_number }}</code> to confirm
+      <input name="confirmation" autocomplete="off" required>
+    </label>
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <button class="danger" type="submit">Remove from registry</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Manage Vehicles — ANPR Demo{% endblock %}
+{% block content %}
+<section class="page-intro">
+  <p class="eyebrow">Administration</p>
+  <h1>Manage vehicles</h1>
+  <div class="action-links">
+    <a href="{{ url_for('web.admin_add_vehicle') }}">Add manually</a>
+    <a href="{{ url_for('web.admin_vehicle_from_image') }}">Register from image</a>
+    <a href="{{ url_for('web.admin_vehicle_from_camera') }}">Register with camera</a>
+  </div>
+</section>
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}
+{% endwith %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Plate</th><th>Display owner</th><th>Email</th><th>Category</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for vehicle in records %}
+      <tr>
+        <td><code class="plate-badge">{{ vehicle.plate_number }}</code></td>
+        <td>{{ vehicle.display_name }}</td>
+        <td>{{ vehicle.email or '—' }}<br><small>{{ 'Summaries enabled' if vehicle.email_notifications_enabled else 'Summaries disabled' }}</small></td>
+        <td>{{ vehicle.category|title }}</td>
+        <td>{{ 'Active' if vehicle.is_active else 'Inactive' }}</td>
+        <td class="actions">
+          <a class="edit-link" href="{{ url_for('web.admin_edit_vehicle', vehicle_id=vehicle.id) }}">Edit</a>
+          {% if vehicle.is_active %}
+          <form method="post" action="{{ url_for('web.admin_deactivate_vehicle', vehicle_id=vehicle.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Deactivate</button>
+          </form>
+          {% else %}
+          <form method="post" action="{{ url_for('web.admin_reactivate_vehicle', vehicle_id=vehicle.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Reactivate</button>
+          </form>
+          {% endif %}
+          <a href="{{ url_for('web.admin_delete_vehicle', vehicle_id=vehicle.id) }}">Delete…</a>
+        </td>
+      </tr>
+      {% else %}<tr><td colspan="6">No vehicles registered.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

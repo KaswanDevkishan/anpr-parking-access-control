@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}ANPR Access-Decision Demo{% endblock %}
+{% block content %}
+<div class="home">
+  <section class="home-hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Access-decision prototype</p>
+      <h1>Smart vehicle access. Instant decisions.</h1>
+      <p class="lede">Detect plates, verify access, and record entry or exit.</p>
+    </div>
+
+    <form class="scan-panel" action="{{ url_for('web.analyse') }}" method="post"
+          enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% if config.ANPR_CHECKPOINT_MODE == 'selectable' %}
+      <fieldset class="checkpoint-selector">
+        <legend>Access direction</legend>
+        <div class="segment-control">
+          <label>
+            <input type="radio" name="checkpoint_action" value="entry" required>
+            <span>Entry</span>
+          </label>
+          <label>
+            <input type="radio" name="checkpoint_action" value="exit" required>
+            <span>Exit</span>
+          </label>
+        </div>
+      </fieldset>
+      {% else %}
+      <input type="hidden" name="checkpoint_action" value="{{ config.ANPR_CHECKPOINT_MODE }}">
+      <p class="fixed-checkpoint">Access direction
+        <strong>{{ config.ANPR_CHECKPOINT_MODE|title }}</strong>
+      </p>
+      {% endif %}
+
+      <input class="file-input" id="vehicle_image" name="vehicle_image" type="file"
+             accept=".jpg,.jpeg,.png,image/jpeg,image/png" required>
+      <label class="drop-zone" for="vehicle_image">
+        <span class="upload-mark" aria-hidden="true">↑</span>
+        <span class="upload-prompt">Drop an image here or <strong>browse</strong></span>
+        <span class="upload-meta">JPG or PNG · 8 MB max</span>
+        <span class="selected-file" aria-live="polite">No file selected</span>
+      </label>
+
+      {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+      <button class="analyse-button" type="submit">
+        <span>Analyse image</span><span aria-hidden="true">→</span>
+      </button>
+      <p class="scan-privacy">Use synthetic or consented images.</p>
+    </form>
+  </section>
+
+  <section class="capability-row" aria-label="Capabilities">
+    <article><strong>Detect</strong><span>Plate OCR</span></article>
+    <article><strong>Verify</strong><span>Exact match</span></article>
+    <article><strong>Track</strong><span>Entry / Exit</span></article>
+    <article><strong>Notify</strong><span>Email summary</span></article>
+  </section>
+
+  <section class="workflow" aria-label="Workflow">
+    <ol>
+      <li><span>01</span>Upload</li>
+      <li><span>02</span>Detect</li>
+      <li><span>03</span>Match</li>
+      <li><span>04</span>Record</li>
+    </ol>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  (() => {
+    const input = document.querySelector("#vehicle_image");
+    const dropZone = document.querySelector(".drop-zone");
+    const fileName = document.querySelector(".selected-file");
+    if (!input || !dropZone || !fileName) return;
+
+    const showSelection = () => {
+      const file = input.files[0];
+      fileName.textContent = file ? file.name : "No file selected";
+      dropZone.classList.toggle("has-file", Boolean(file));
+    };
+
+    input.addEventListener("change", showSelection);
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropZone.classList.add("is-dragging");
+      });
+    });
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("is-dragging");
+    });
+    dropZone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dropZone.classList.remove("is-dragging");
+      if (event.dataTransfer.files.length) {
+        input.files = event.dataTransfer.files;
+        showSelection();
+      }
+    });
+  })();
+</script>
+{% endblock %}
