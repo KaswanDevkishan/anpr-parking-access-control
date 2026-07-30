@@ -328,7 +328,7 @@ git diff --check
 gunicorn --check-config wsgi:app
 ```
 
-## Resume-ready description
+## Description
 
 > Built a modular Python ANPR access-decision prototype using OpenCV and
 > EasyOCR, with an unchanged Raspberry Pi CSV workflow and a Flask/SQLite
