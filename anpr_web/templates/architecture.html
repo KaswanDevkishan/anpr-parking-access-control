@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Architecture — ANPR Demo{% endblock %}
+{% block content %}
+<section class="page-intro">
+  <p class="eyebrow">Architecture</p>
+  <h1>One modular pipeline, two demonstration modes.</h1>
+  <p>The access-decision prototype separates image capture, detection, OCR,
+    normalization, matching, storage, and presentation.</p>
+</section>
+<section class="architecture-grid">
+  <article><h2>Raspberry Pi live camera</h2><p>The unchanged CLI reads a USB camera through OpenCV, runs periodic OCR, checks the local CSV registry, and draws an on-screen recommendation.</p></article>
+  <article><h2>Flask web demo</h2><p>The web mode validates temporary JPG or PNG frames and uses SQLite for fictional vehicles and retained visits. The server never opens the client camera.</p></article>
+  <article><h2>Plate detection</h2><p>OpenCV contour geometry locates plate-like rectangles. Uploads can use a conservative close-up fallback; the live detector keeps its original area limits.</p></article>
+  <article><h2>OCR</h2><p>EasyOCR reads a preprocessed crop with Japanese and English support. Blur, glare, angle, distance, and unusual layouts can produce incorrect or empty text.</p></article>
+  <article><h2>Normalize and match</h2><p>Whitespace is removed and text is uppercased consistently. Web authorization requires an exact normalized match to an active SQLite record; fuzzy matching is disabled.</p></article>
+  <article><h2>Visit decision</h2><p>After ALLOWED, the configured Entry or Exit action is applied transactionally. Open visits are unique per vehicle, history is never overwritten, and still images never imply direction.</p></article>
+  <article><h2>Exit-summary email</h2><p>The exit transaction commits before a uniquely keyed delivery record is attempted. SMTP failures cannot reopen a visit or change an access decision; failed deliveries may be retried once by an authenticated administrator.</p></article>
+  <article><h2>Parking overview</h2><p>Occupancy counts open visits for current vehicles. A vehicle currently inside must exit before its registry record can be permanently deleted. Optional capacity produces availability and percentage displays only; reaching capacity does not block an access decision.</p></article>
+  <article><h2>Administration records</h2><p>Filtered history can be exported to an in-memory, formula-safe CSV. A paginated audit log records selected administrative actions without raw email addresses, secrets, images, or session data.</p></article>
+  <article><h2>Browser camera registration</h2><p>An authenticated admin browser sends occasional temporary frames for multi-sample detection and OCR. A corrected review form and explicit confirmation are required before shared registration validation saves anything.</p></article>
+  <article><h2>Presentation</h2><p>UTC timestamps are displayed in the configured local timezone. Searchable history, status metrics, and accessible saved light/dark themes remain presentation-only and do not control hardware.</p></article>
+</section>
+<section class="prose">
+  <h2>Privacy behavior</h2>
+  <p>Uploads use random temporary filenames and are removed after each request.
+    Image and camera-assisted registration embeds review images in the response and
+    does not retain original or cropped imagery. Public registry pages omit institutional
+    IDs and private metadata. Optional visit-summary email requires explicit consent;
+    only a masked destination and delivery outcome remain with retained history.
+    Message bodies are never saved. Only fictional data belongs in this repository.</p>
+  <h2>Limitations</h2>
+  <p>This is an access-decision prototype, not a production ANPR system and not
+    physical gate control. Accuracy and security are not independently calibrated.
+    SQLite needs a single-instance persistent disk in hosted deployments, in-memory
+    login and camera sampling limits are process-local, and OCR or contour heuristics
+    can fail. Camera access requires a secure browser context and user permission.</p>
+</section>
+{% endblock %}

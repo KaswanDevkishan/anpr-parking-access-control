@@ -14,6 +14,11 @@ Returns the cropped plate image + its coordinates (x, y, w, h).
 
 import cv2
 
+LIVE_MAX_AREA_RATIO = 0.35
+UPLOAD_MAX_AREA_RATIO = 0.9
+CLOSE_UP_MIN_ASPECT_RATIO = 1.8
+CLOSE_UP_MAX_ASPECT_RATIO = 2.4
+
 
 def _preprocess(frame):
     """Prepare frame for contour detection."""
@@ -42,6 +47,41 @@ def detect_plate(frame):
     (plate_img, (x, y, w, h))  –  if a plate-like region is found
     (None, None)                –  if nothing suitable is found
     """
+    return _detect_plate_with_max_area(frame, LIVE_MAX_AREA_RATIO)
+
+
+def detect_plate_for_upload(frame):
+    """
+    Locate a plate in an uploaded image without changing live-camera defaults.
+
+    The live detector is tried first. A second contour pass permits a plate to
+    occupy more of an upload. If neither pass finds a contour, a landscape image
+    with a plausible plate aspect ratio is treated conservatively as a close-up
+    crop and passed whole to OCR.
+
+    Returns
+    -------
+    (plate_img, (x, y, w, h), method)  –  if a plate-like region is found
+    (None, None, None)                  –  if nothing suitable is found
+    """
+    plate_image, bbox = detect_plate(frame)
+    if plate_image is not None and bbox is not None:
+        return plate_image, bbox, "Contour detection"
+
+    plate_image, bbox = _detect_plate_with_max_area(frame, UPLOAD_MAX_AREA_RATIO)
+    if plate_image is not None and bbox is not None:
+        return plate_image, bbox, "Contour detection"
+
+    height, width = frame.shape[:2]
+    aspect_ratio = width / float(height)
+    if CLOSE_UP_MIN_ASPECT_RATIO <= aspect_ratio <= CLOSE_UP_MAX_ASPECT_RATIO:
+        return frame, (0, 0, width, height), "Close-up fallback"
+
+    return None, None, None
+
+
+def _detect_plate_with_max_area(frame, max_area_ratio):
+    """Run contour detection with an explicit maximum candidate area."""
     edges = _preprocess(frame)
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -63,7 +103,7 @@ def detect_plate(frame):
             # Japanese plates are ~330×165 mm (2:1 ratio).
             # Accept 1.5–5.5 to handle slight angles and partial views.
             # Area bounds: not too small (noise) and not the whole frame.
-            if 1.5 <= aspect <= 5.5 and 3_000 <= area <= frame_area * 0.35:
+            if 1.5 <= aspect <= 5.5 and 3_000 <= area <= frame_area * max_area_ratio:
                 plate_roi = frame[y : y + h, x : x + w]
                 return plate_roi, (x, y, w, h)
 

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Privacy — ANPR Demo{% endblock %}
+{% block content %}
+<section class="prose">
+  <p class="eyebrow">Privacy</p>
+  <h1>Data handling in this prototype</h1>
+  <h2>Vehicle and visit records</h2>
+  <p>The public registry never displays email addresses. Authenticated administrators can manage fictional vehicle records and optional notification consent. Visit history retains timestamps and fictional registry details for demonstration reporting.</p>
+  <h2>Email consent and retention</h2>
+  <p>Visit-summary email is opt-in and requires a valid address. It is sent only after a completed exit when delivery is configured. Delivery records retain a masked destination and status, never message bodies, credentials, or full provider responses. Removing or deactivating a vehicle prevents new summary messages.</p>
+  <h2>Images</h2>
+  <p>Uploaded and browser-camera stills are validated, processed in temporary storage, and deleted. Review images are embedded in the immediate response and are not persisted by the application.</p>
+  <h2>Prototype limitation</h2>
+  <p>This access-decision prototype is not production-ready and does not control a gate or physical barrier. Use synthetic or explicitly consented data only.</p>
+</section>
+{% endblock %}

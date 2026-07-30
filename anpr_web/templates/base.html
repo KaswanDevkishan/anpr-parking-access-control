@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ANPR access-decision portfolio prototype">
+  <title>{% block title %}ANPR Prototype{% endblock %}</title>
+  <script>
+    (() => {
+      const saved = localStorage.getItem("anpr-theme");
+      const theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="{{ url_for('web.index') }}">ANPR<span>/lab</span></a>
+    <nav aria-label="Main navigation">
+      <a href="{{ url_for('web.index') }}">Demo</a>
+      <a href="{{ url_for('web.registered_vehicles') }}">Registered Vehicles</a>
+      <a href="{{ url_for('web.access_history') }}">Access History</a>
+      <a href="{{ url_for('web.architecture') }}">Architecture</a>
+      <a href="{{ url_for('web.privacy') }}">Privacy</a>
+      {% if session.admin_authenticated %}
+      <a href="{{ url_for('web.admin_dashboard') }}">Admin Dashboard</a>
+      <form class="nav-form" action="{{ url_for('web.admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Logout</button>
+      </form>
+      {% else %}
+      <a href="{{ url_for('web.admin_login') }}">Admin</a>
+      {% endif %}
+      <button class="theme-toggle" type="button" aria-label="Switch to dark theme"
+              title="Switch to dark theme"><span aria-hidden="true">◐</span></button>
+    </nav>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <script>
+    (() => {
+      const button = document.querySelector(".theme-toggle");
+      const update = () => {
+        const dark = document.documentElement.dataset.theme === "dark";
+        button.setAttribute("aria-label", `Switch to ${dark ? "light" : "dark"} theme`);
+        button.title = button.getAttribute("aria-label");
+      };
+      button.addEventListener("click", () => {
+        const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = next;
+        localStorage.setItem("anpr-theme", next);
+        update();
+      });
+      update();
+    })();
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

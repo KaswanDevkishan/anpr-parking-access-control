@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Register with Camera — ANPR Demo{% endblock %}
+{% block content %}
+<section class="page-intro">
+  <p class="eyebrow">Admin camera-assisted registration</p>
+  <h1>Register with Camera</h1>
+  <p>Your browser requests camera access. Only occasional still frames are sent
+    for temporary analysis; no video or plate image is retained.</p>
+</section>
+<div id="camera-message" class="notice" role="status">Choose Start detection or Capture manually. If camera access is unavailable, use <a href="{{ url_for('web.admin_vehicle_from_image') }}">image upload</a> or <a href="{{ url_for('web.admin_add_vehicle') }}">manual registration</a>.</div>
+<section class="camera-grid">
+  <div class="panel">
+    <video id="camera-preview" autoplay muted playsinline></video>
+    <canvas id="camera-canvas" hidden></canvas>
+    <div class="camera-actions">
+      <button type="button" id="camera-start">Start detection</button>
+      <button type="button" id="camera-capture">Capture manually</button>
+      <button type="button" id="camera-switch" class="secondary">Switch camera</button>
+      <button type="button" id="camera-cancel" class="danger">Cancel</button>
+    </div>
+  </div>
+  <div id="camera-review" class="panel" {% if not show_review %}hidden{% endif %}>
+    <div class="review-grid">
+      <figure><img id="camera-original" alt="Temporary captured camera frame"><figcaption>Original frame — not retained</figcaption></figure>
+      <figure><img id="camera-crop" alt="Temporary detected plate crop"><figcaption>Detected plate — not retained</figcaption></figure>
+    </div>
+    {% if errors %}<div class="error" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+    <form class="form-stack" method="post" action="{{ url_for('web.admin_confirm_camera_vehicle') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Plate number<input id="camera-plate" name="plate_number" maxlength="20" value="{{ values.plate_number if values else '' }}" required></label>
+      <label>Display owner name<input name="display_name" maxlength="80" value="{{ values.display_name if values else '' }}" required></label>
+      <label>Email address (optional)<input name="email" type="email" maxlength="254" value="{{ values.email if values and values.email else '' }}" autocomplete="email"></label>
+      <label>Category<select name="category" required>
+        <option value="">Choose category</option>
+        {% for category in categories or ('student', 'staff', 'visitor', 'contractor') %}<option value="{{ category }}" {% if values and values.category == category %}selected{% endif %}>{{ category|title }}</option>{% endfor %}
+      </select></label>
+      <label class="checkbox"><input name="is_active" type="checkbox" value="1" {% if not values or values.is_active %}checked{% endif %}> Active</label>
+      <label class="checkbox"><input name="email_notifications_enabled" type="checkbox" value="1" {% if values and values.email_notifications_enabled %}checked{% endif %}> Send visit-summary emails after exit.</label>
+      <p class="privacy-note">Never infer an email from camera data. Enable notifications only with consent.</p>
+      <button type="submit">Confirm and save</button>
+      <button type="button" id="camera-retake" class="secondary">Retake</button>
+    </form>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='camera.js') }}" defer></script>
+{% endblock %}
