@@ -253,6 +253,7 @@ in the `apikey` request header and never renders provider payloads.
 | `ANPR_OCR_API_URL` | Empty | OCR.Space HTTPS parse endpoint |
 | `ANPR_OCR_API_KEY` | Empty | OCR.Space API key; configure as a Render secret |
 | `ANPR_OCR_TIMEOUT_SECONDS` | `15` | Positive cloud OCR request timeout |
+| `ANPR_OCR_DEBUG_VARIANT_DIR` | Empty | Development-only directory for the two processed OCR inputs; disabled on Render |
 | `ANPR_WEB_TEMP_DIR` | OS temporary directory | Ephemeral web upload directory |
 | `ANPR_SQLITE_PATH` | `data/anpr_web.sqlite3` | Flask vehicle database path |
 | `ANPR_TIMEZONE` | `Asia/Tokyo` | IANA timezone used for display and local-date reporting |

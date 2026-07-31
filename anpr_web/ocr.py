@@ -2,11 +2,13 @@
 
 import importlib
 import json
+import os
 import re
 import subprocess
 import time
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -30,6 +32,7 @@ def create_web_ocr_backend(
     api_key="",
     timeout_seconds=5.0,
     transport=None,
+    debug_variant_dir=None,
 ):
     """Return an OCR adapter without importing either OCR implementation."""
     normalized = (name or "").strip().lower()
@@ -38,6 +41,7 @@ def create_web_ocr_backend(
             OCRSpaceProvider(api_url, api_key),
             timeout_seconds=timeout_seconds,
             transport=transport,
+            debug_variant_dir=debug_variant_dir,
         )
     if normalized == "tesseract":
         return TesseractOCRBackend()
@@ -58,11 +62,17 @@ class HTTPSOCRBackend:
         timeout_seconds=5.0,
         transport=None,
         clock=time.monotonic,
+        debug_variant_dir=None,
     ):
         self.provider = provider
         self.timeout_seconds = timeout_seconds
         self._transport = transport or _send_json
         self._clock = clock
+        self._debug_variant_dir = (
+            Path(debug_variant_dir)
+            if debug_variant_dir and not os.environ.get("RENDER")
+            else None
+        )
         self.last_diagnostics = None
 
     def read(self, plate_image, confidence_threshold=0.5):
@@ -77,6 +87,7 @@ class HTTPSOCRBackend:
             for variant_name, variant_image in _ocr_space_variants(plate_image)[
                 :MAX_OCR_SPACE_CALLS
             ]:
+                self._save_debug_variant(variant_name, variant_image)
                 remaining = deadline - self._clock()
                 if remaining <= 0:
                     status = "timeout"
@@ -93,6 +104,16 @@ class HTTPSOCRBackend:
                     request = self.provider.build_request(payload.tobytes())
                     response = self._transport(request, remaining)
                     response_candidates = self.provider.parse_response(response)
+                    response_candidates = tuple(
+                        OCRCandidate(
+                            item.text,
+                            item.top,
+                            item.bottom,
+                            item.area,
+                            variant_name,
+                        )
+                        for item in response_candidates
+                    )
                     raw_text = self.provider.sanitized_text(response)
                     candidates.extend(response_candidates)
                     variants.append(
@@ -108,7 +129,7 @@ class HTTPSOCRBackend:
                         OCRVariantDiagnostics(variant_name, "", (), "timeout")
                     )
                     status = "timeout"
-                    break
+                    continue
                 except HTTPError:
                     variants.append(
                         OCRVariantDiagnostics(variant_name, "", (), "http-error")
@@ -160,6 +181,13 @@ class HTTPSOCRBackend:
                 variants=tuple(variants),
             )
 
+    def _save_debug_variant(self, variant_name, image):
+        """Optionally retain processed inputs locally, but never on Render."""
+        if self._debug_variant_dir is None:
+            return
+        self._debug_variant_dir.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(self._debug_variant_dir / f"{variant_name}.png"), image)
+
 
 @dataclass(frozen=True)
 class OCRCandidate:
@@ -169,6 +197,7 @@ class OCRCandidate:
     top: float | None = None
     bottom: float | None = None
     area: float = 0.0
+    variant: str = ""
 
 
 class OCRProviderError(ValueError):
@@ -229,9 +258,12 @@ class OCRSpaceProvider:
                 raise ValueError("Malformed OCR response.")
             for line in result["ParsedText"].splitlines() or [result["ParsedText"]]:
                 for sequence in _digit_sequences(line):
-                    candidates.append(
-                        OCRCandidate(sequence, line_number, line_number, len(sequence))
-                    )
+                    if len(sequence) in (3, 4):
+                        candidates.append(
+                            OCRCandidate(
+                                sequence, line_number, line_number, len(sequence)
+                            )
+                        )
                 line_number += 1
         return tuple(candidates)
 
@@ -291,7 +323,7 @@ def _select_plate_candidate(candidates):
         plausible,
         key=lambda candidate: (
             len(candidate.text) == 4,
-            candidate.bottom is not None,
+            candidate.variant == "lower_number_row",
             candidate.bottom if candidate.bottom is not None else -1,
             candidate.area,
         ),
@@ -403,21 +435,48 @@ class OCRVariantDiagnostics:
     candidates: tuple[str, ...]
     status: str
 
+    @property
+    def succeeded(self):
+        return self.status == "success"
+
 
 def _ocr_space_variants(plate_image):
-    """Build the two lightweight OCR.Space inputs without retaining either."""
+    """Build exactly the full-plate and lower-number-row OCR.Space inputs."""
     height, width = plate_image.shape[:2]
-    full = cv2.resize(
-        plate_image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC
+    border_y = min(int(height * 0.01), max(0, (height - 1) // 2))
+    border_x = min(int(width * 0.01), max(0, (width - 1) // 2))
+    full_crop = plate_image[
+        border_y : height - border_y if border_y else height,
+        border_x : width - border_x if border_x else width,
+    ]
+    full_gray = (
+        full_crop
+        if full_crop.ndim == 2
+        else cv2.cvtColor(full_crop, cv2.COLOR_BGR2GRAY)
     )
-    lower_top = int(height * 0.40)
-    lower = plate_image[lower_top:height, 0:width]
-    gray = lower if lower.ndim == 2 else cv2.cvtColor(lower, cv2.COLOR_BGR2GRAY)
-    enhanced = cv2.equalizeHist(gray)
-    enlarged = cv2.resize(
-        enhanced, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC
+    target_width = 1800
+    full_height = max(1, round(full_gray.shape[0] * target_width / full_gray.shape[1]))
+    full_resized = cv2.resize(
+        full_gray, (target_width, full_height), interpolation=cv2.INTER_CUBIC
     )
-    return (("full_2x", full), ("lower_60pct_contrast_3x", enlarged))
+    full = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8)).apply(full_resized)
+
+    lower_top = min(height - 1, int(height * 0.42))
+    lower_bottom = max(lower_top + 1, min(height, int(height * 0.98)))
+    lower = plate_image[lower_top:lower_bottom, 0:width]
+    lower_gray = (
+        lower if lower.ndim == 2 else cv2.cvtColor(lower, cv2.COLOR_BGR2GRAY)
+    )
+    lower_enlarged = cv2.resize(
+        lower_gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC
+    )
+    lower_thresholded = cv2.threshold(
+        lower_enlarged, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )[1]
+    return (
+        ("full_plate", full),
+        ("lower_number_row", lower_thresholded),
+    )
 
 
 def _prepare_candidate(plate_image, crop_name, preprocessing):
@@ -479,11 +538,17 @@ def _run_tesseract(image, psm, timeout):
 
 
 def _digit_sequences(text):
+    normalized = unicodedata.normalize("NFKC", text)
     normalized = "".join(
         str(unicodedata.digit(character))
         if character.isdigit() and not character.isascii()
         else character
-        for character in text
+        for character in normalized
+    )
+    normalized = re.sub(
+        r"(?<!\d)(?:\d[ \t]+){2,3}\d(?!\d)",
+        lambda match: re.sub(r"[ \t]+", "", match.group()),
+        normalized,
     )
     return re.findall(r"\d+", normalized)
 

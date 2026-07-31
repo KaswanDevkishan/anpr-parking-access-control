@@ -86,6 +86,9 @@ def create_app(test_config=None, processor=None):
         ANPR_OCR_TIMEOUT_SECONDS=os.environ.get(
             "ANPR_OCR_TIMEOUT_SECONDS", "15"
         ).strip(),
+        ANPR_OCR_DEBUG_VARIANT_DIR=os.environ.get(
+            "ANPR_OCR_DEBUG_VARIANT_DIR", ""
+        ).strip(),
         CAMERA_SAMPLE_INTERVAL_SECONDS=0.75,
         CAMERA_STABLE_SAMPLES=3,
         CAMERA_SESSION_TIMEOUT_SECONDS=30,
@@ -188,6 +191,11 @@ def create_app(test_config=None, processor=None):
             "api_url": app.config["ANPR_OCR_API_URL"],
             "api_key": app.config["ANPR_OCR_API_KEY"],
             "timeout_seconds": app.config["ANPR_OCR_TIMEOUT_SECONDS"],
+            "debug_variant_dir": (
+                app.config["ANPR_OCR_DEBUG_VARIANT_DIR"]
+                if (app.debug or app.testing) and not os.environ.get("RENDER")
+                else None
+            ),
         },
     )
     app.extensions["anpr_login_attempts"] = {}

@@ -24,7 +24,7 @@
     <div><dt>Normalized candidates</dt><dd>{{ review.ocr_diagnostics.candidates|join(', ') if review.ocr_diagnostics.candidates else '—' }}</dd></div>
     <div><dt>Selected candidate</dt><dd>{{ review.ocr_diagnostics.raw_result or '—' }}</dd></div>
     {% for variant in review.ocr_diagnostics.variants %}
-    <div><dt>{{ variant.name }}</dt><dd>Raw: {{ variant.raw_text or '—' }}; candidates: {{ variant.candidates|join(', ') if variant.candidates else '—' }}; status: {{ variant.status }}</dd></div>
+    <div><dt>{{ variant.name }}</dt><dd>OCR text: {{ variant.raw_text or '—' }}; candidates: {{ variant.candidates|join(', ') if variant.candidates else '—' }}; request succeeded: {{ 'yes' if variant.succeeded else 'no' }}; status: {{ variant.status }}</dd></div>
     {% endfor %}
   </dl>
 </section>

@@ -131,7 +131,10 @@ class WebProcessor:
             )
 
         try:
-            ocr_text = self._read_plate(plate_image).strip()
+            ocr_source = (
+                frame if detection_method == "Close-up fallback" else plate_image
+            )
+            ocr_text = self._read_plate(ocr_source).strip()
         except OCRTimeout:
             return ProcessingResult(
                 "NOT ALLOWED",
@@ -204,7 +207,10 @@ class WebProcessor:
             )
 
         try:
-            ocr_text = self._read_plate(plate_image).strip()
+            ocr_source = (
+                frame if detection_method == "Close-up fallback" else plate_image
+            )
+            ocr_text = self._read_plate(ocr_source).strip()
         except OCRTimeout:
             return ImageReview(
                 _encode_image(frame),

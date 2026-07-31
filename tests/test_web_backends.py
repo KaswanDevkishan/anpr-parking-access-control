@@ -110,7 +110,7 @@ def test_ocr_space_normalizes_full_width_digits():
 def test_ocr_space_multiple_lines_prefer_plausible_lower_row():
     backend = _ocr_space_backend(_ocr_space_response("品川 500\n分類 12\n1238"))
     assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
-    assert backend.last_diagnostics.candidates == ("500", "12", "1238")
+    assert backend.last_diagnostics.candidates == ("500", "1238")
 
 
 def test_ocr_space_prefers_four_digits_across_variants():
@@ -126,9 +126,19 @@ def test_ocr_space_prefers_four_digits_across_variants():
     assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
     assert backend.last_diagnostics.candidates == ("238", "1238")
     assert tuple(item.name for item in backend.last_diagnostics.variants) == (
-        "full_2x",
-        "lower_60pct_contrast_3x",
+        "full_plate",
+        "lower_number_row",
     )
+
+
+def test_ocr_space_joins_spaced_digits_without_inventing_digits():
+    backend = _ocr_space_backend(_ocr_space_response("は 1 2 3 8"))
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
+
+
+def test_ocr_space_multiline_top_338_bottom_1238_selects_1238():
+    backend = _ocr_space_backend(_ocr_space_response("品川 338\n分類\n1238"))
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
 
 
 def test_ocr_space_does_not_pad_three_digit_result():
@@ -336,6 +346,31 @@ def test_exact_registered_1238_is_allowed(tmp_path):
     assert result.status == "ALLOWED"
     assert result.match["matched_plate"] == "1238"
     assert result.match["distance"] == 0
+
+
+def test_close_up_fallback_ocr_uses_complete_upload(tmp_path):
+    image_path = tmp_path / "close-up.png"
+    frame = np.zeros((40, 80, 3), dtype=np.uint8)
+    frame[:, :10] = 255
+    cv2.imwrite(str(image_path), frame)
+    observed = []
+    runtime = SimpleNamespace(
+        ocr_confidence_threshold=0.5,
+        min_ocr_length=3,
+        matching_policy="exact",
+        match_tolerance=0,
+    )
+
+    def detector(upload):
+        return upload[:, 10:70], (10, 0, 60, 40), "Close-up fallback"
+
+    def ocr(source, *_args, **_kwargs):
+        observed.append(source.copy())
+        return "238"
+
+    WebProcessor(runtime, detector=detector, ocr=ocr).process(image_path, {})
+    assert observed[0].shape == frame.shape
+    assert np.all(observed[0][:, :10] == 255)
 
 
 def _blocking_processor(tmp_path, ocr):
