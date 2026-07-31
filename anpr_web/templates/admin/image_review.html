@@ -18,10 +18,9 @@
 <section class="panel" aria-label="Private OCR diagnostics">
   <h2>OCR diagnostics</h2>
   <dl class="facts">
-    <div><dt>Selected candidate</dt><dd>{{ review.ocr_diagnostics.selected.digits if review.ocr_diagnostics.selected else '—' }}</dd></div>
-    <div><dt>Selected crop</dt><dd>{{ review.ocr_diagnostics.selected.crop if review.ocr_diagnostics.selected else '—' }}</dd></div>
-    <div><dt>Vote counts</dt><dd>{% for digits, count in review.ocr_diagnostics.vote_counts %}<code>{{ digits }}</code>: {{ count }}{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</dd></div>
-    <div><dt>Alternatives</dt><dd>{% for digits, count in review.ocr_diagnostics.alternatives %}<code>{{ digits }}</code> ({{ count }}){% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</dd></div>
+    <div><dt>Attempt used</dt><dd>{{ review.ocr_diagnostics.attempt or 'Timed out before OCR' }}</dd></div>
+    <div><dt>Elapsed OCR time</dt><dd>{{ '%.2f'|format(review.ocr_diagnostics.elapsed_seconds) }} seconds</dd></div>
+    <div><dt>Raw normalized result</dt><dd><code>{{ review.ocr_diagnostics.raw_result or '—' }}</code></dd></div>
   </dl>
 </section>
 {% endif %}

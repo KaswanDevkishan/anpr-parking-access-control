@@ -94,6 +94,7 @@ def analyse():
     return render_template(
         "result.html",
         result=result,
+        show_ocr_diagnostics=bool(session.get(LOGIN_SESSION_KEY)),
         checkpoint_result=checkpoint_result,
         notification_result=notification_result,
     )

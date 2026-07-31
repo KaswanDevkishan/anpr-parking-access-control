@@ -31,6 +31,16 @@
       <div><dt>Vehicle category</dt><dd>{{ result.match.type|title if result.match else '—' }}</dd></div>
     </dl>
   </div>
+  {% if show_ocr_diagnostics and result.ocr_diagnostics %}
+  <section class="panel" aria-label="Private OCR diagnostics">
+    <h2>OCR diagnostics</h2>
+    <dl class="facts">
+      <div><dt>Attempt used</dt><dd>{{ result.ocr_diagnostics.attempt or 'Timed out before OCR' }}</dd></div>
+      <div><dt>Elapsed OCR time</dt><dd>{{ '%.2f'|format(result.ocr_diagnostics.elapsed_seconds) }} seconds</dd></div>
+      <div><dt>Raw normalized result</dt><dd><code>{{ result.ocr_diagnostics.raw_result or '—' }}</code></dd></div>
+    </dl>
+  </section>
+  {% endif %}
   <p class="registry-note">All registry entries and owner details shown here are synthetic demonstration records.</p>
   {% if notification_result %}<p class="notification-result">{{ notification_result }}</p>{% endif %}
   <a class="text-link" href="{{ url_for('web.index') }}">← Analyse another image</a>

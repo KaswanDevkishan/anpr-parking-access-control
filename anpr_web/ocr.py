@@ -9,9 +9,9 @@ from dataclasses import dataclass
 
 import cv2
 
-MAX_TESSERACT_CALLS = 3
-OCR_BUDGET_SECONDS = 4.0
-TESSERACT_TIMEOUT_SECONDS = 1.2
+MAX_TESSERACT_CALLS = 2
+OCR_BUDGET_SECONDS = 6.5
+TESSERACT_TIMEOUT_SECONDS = 3.0
 
 
 class OCRTimeout(RuntimeError):
@@ -48,12 +48,11 @@ class EasyOCRBackend:
 
 
 class TesseractOCRBackend:
-    """Run at most three sequential Tesseract passes within a hard deadline."""
+    """Run one primary pass and, only when empty, one bounded fallback pass."""
 
     PASSES = (
-        ("lower_balanced", "otsu_3x", 7),
-        ("lower_alternate", "inverted_otsu_3x", 7),
-        ("lower_balanced", "grayscale_3x", 13),
+        ("primary", "otsu_3x", 7),
+        ("fallback", "inverted_otsu_3x", 13),
     )
 
     def __init__(self, clock=time.monotonic):
@@ -62,61 +61,54 @@ class TesseractOCRBackend:
 
     def read(self, plate_image, confidence_threshold=0.5):
         del confidence_threshold  # Tesseract CLI has no comparable confidence input.
-        deadline = self._clock() + OCR_BUDGET_SECONDS
-        observations = []
+        started = self._clock()
+        deadline = started + OCR_BUDGET_SECONDS
 
         for crop_name, preprocessing, psm in self.PASSES[:MAX_TESSERACT_CALLS]:
             remaining = deadline - self._clock()
             if remaining <= 0:
+                self._record_diagnostics(started, None, "")
                 raise OCRTimeout("The total OCR deadline was exhausted.")
 
             candidate_image = _prepare_candidate(plate_image, crop_name, preprocessing)
             try:
                 remaining = deadline - self._clock()
                 if remaining <= 0:
+                    self._record_diagnostics(started, None, "")
                     raise OCRTimeout("The total OCR deadline was exhausted.")
-                text = _run_tesseract(
-                    candidate_image,
-                    psm,
-                    timeout=min(TESSERACT_TIMEOUT_SECONDS, remaining),
-                )
+                try:
+                    text = _run_tesseract(
+                        candidate_image,
+                        psm,
+                        timeout=min(TESSERACT_TIMEOUT_SECONDS, remaining),
+                    )
+                except OCRTimeout:
+                    self._record_diagnostics(started, crop_name, "")
+                    raise
             finally:
                 # Do not retain transformed image arrays between passes.
                 del candidate_image
 
+            if self._clock() > deadline:
+                self._record_diagnostics(started, crop_name, "")
+                raise OCRTimeout("The total OCR deadline was exhausted.")
+
             sequences = _plausible_sequences(text)
             if sequences:
                 selected_digits = max(sequences, key=len)
-                selected = OCRCandidate(
-                    digits=selected_digits,
-                    crop=crop_name,
-                    preprocessing=preprocessing,
-                    psm=psm,
-                )
-                observations.append(selected)
-                self.last_diagnostics = OCRDiagnostics(
-                    backend="tesseract",
-                    selected=selected,
-                    candidates=tuple(observations),
-                )
+                self._record_diagnostics(started, crop_name, selected_digits)
                 return selected_digits
 
-        self.last_diagnostics = OCRDiagnostics(
-            backend="tesseract",
-            selected=None,
-            candidates=tuple(observations),
-        )
+        self._record_diagnostics(started, "fallback", "")
         return ""
 
-
-@dataclass(frozen=True)
-class OCRCandidate:
-    """One normalized result retained for private/admin diagnostics."""
-
-    digits: str
-    crop: str
-    preprocessing: str
-    psm: int
+    def _record_diagnostics(self, started, attempt, raw_result):
+        self.last_diagnostics = OCRDiagnostics(
+            backend="tesseract",
+            attempt=attempt,
+            elapsed_seconds=max(0.0, self._clock() - started),
+            raw_result=raw_result,
+        )
 
 
 @dataclass(frozen=True)
@@ -124,14 +116,10 @@ class OCRDiagnostics:
     """Structured details kept on the backend and not rendered publicly."""
 
     backend: str
-    selected: OCRCandidate | None
-    candidates: tuple[OCRCandidate, ...]
-    vote_counts: tuple[tuple[str, int], ...] = ()
+    attempt: str | None
+    elapsed_seconds: float
+    raw_result: str
     uncertain: bool = False
-
-    @property
-    def alternatives(self):
-        return ()
 
 
 def _prepare_candidate(plate_image, crop_name, preprocessing):
@@ -140,10 +128,10 @@ def _prepare_candidate(plate_image, crop_name, preprocessing):
     if not height or not width:
         return plate_image
 
-    if crop_name == "lower_alternate":
-        top, bottom, left, right = 0.48, 0.98, 0.06, 0.94
+    if crop_name == "fallback":
+        top, bottom, left, right = 0.42, 0.98, 0.15, 0.97
     else:
-        top, bottom, left, right = 0.42, 0.94, 0.07, 0.93
+        top, bottom, left, right = 0.50, 0.96, 0.24, 0.95
     crop = plate_image[
         int(height * top) : max(int(height * top) + 1, int(height * bottom)),
         int(width * left) : max(int(width * left) + 1, int(width * right)),

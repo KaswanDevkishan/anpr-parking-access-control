@@ -39,6 +39,7 @@ class ProcessingResult:
     annotated_image: str
     detection_method: str | None = None
     ocr_uncertain: bool = False
+    ocr_diagnostics: object | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +136,8 @@ class WebProcessor:
                 None,
                 _encode_image(_annotate(frame, bbox, False)),
                 detection_method,
+                False,
+                self._ocr_diagnostics(),
             )
 
         diagnostics = self._ocr_diagnostics()
@@ -169,6 +172,7 @@ class WebProcessor:
             _encode_image(annotated),
             detection_method,
             uncertain,
+            diagnostics,
         )
 
     def review(self, image_path):

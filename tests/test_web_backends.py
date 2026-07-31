@@ -61,7 +61,7 @@ def test_tesseract_extracts_longest_mocked_digit_run(monkeypatch):
     assert TesseractOCRBackend().read(image) == "3456"
 
 
-def test_tesseract_never_exceeds_three_calls(monkeypatch):
+def test_tesseract_never_exceeds_two_calls(monkeypatch):
     image = np.zeros((40, 120, 3), dtype=np.uint8)
     calls = []
     monkeypatch.setattr(
@@ -70,9 +70,9 @@ def test_tesseract_never_exceeds_three_calls(monkeypatch):
     )
 
     assert TesseractOCRBackend().read(image) == ""
-    assert len(calls) == 3
-    assert [psm for psm, _timeout in calls] == [7, 7, 13]
-    assert all(0 < timeout <= 1.2 for _psm, timeout in calls)
+    assert len(calls) == 2
+    assert [psm for psm, _timeout in calls] == [7, 13]
+    assert all(0 < timeout <= 3.0 for _psm, timeout in calls)
 
 
 def test_tesseract_early_success_stops_later_calls(monkeypatch):
@@ -88,13 +88,30 @@ def test_tesseract_early_success_stops_later_calls(monkeypatch):
     assert len(calls) == 1
 
 
+def test_tesseract_fallback_runs_only_after_empty_primary(monkeypatch):
+    calls = []
+
+    def fake_run(_candidate, psm, timeout):
+        del timeout
+        calls.append(psm)
+        return "" if psm == 7 else "1238"
+
+    monkeypatch.setattr("anpr_web.ocr._run_tesseract", fake_run)
+    backend = TesseractOCRBackend()
+    image = np.zeros((40, 120, 3), dtype=np.uint8)
+    assert backend.read(image) == "1238"
+    assert calls == [7, 13]
+    assert backend.last_diagnostics.attempt == "fallback"
+    assert backend.last_diagnostics.raw_result == "1238"
+
+
 def test_total_ocr_deadline_stops_before_another_call(monkeypatch):
     now = [0.0]
     calls = []
 
     def fake_run(_candidate, _psm, timeout):
         calls.append(timeout)
-        now[0] += 2.0
+        now[0] += 3.3
         return ""
 
     monkeypatch.setattr("anpr_web.ocr._run_tesseract", fake_run)
@@ -230,7 +247,7 @@ def test_exact_authorization_occurs_only_after_ocr_returns_registered_number(
         runtime, detector=detector, ocr=lambda *_args, **_kw: "1238"
     )
     assert recognized.process(image_path, database).status == "ALLOWED"
-    unknown = WebProcessor(runtime, detector=detector, ocr=lambda *_args, **_kw: "9999")
+    unknown = WebProcessor(runtime, detector=detector, ocr=lambda *_args, **_kw: "1236")
     assert unknown.process(image_path, database).status == "NOT ALLOWED"
 
 
