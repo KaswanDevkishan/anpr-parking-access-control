@@ -193,6 +193,7 @@ def test_login_succeeds_and_dashboard_navigation_changes(client):
     assert response.status_code == 302
     dashboard = client.get("/admin")
     assert b"Admin Dashboard" in dashboard.data
+    assert b"Demo storage is temporary and may reset." in dashboard.data
     assert b"Logout" in dashboard.data
 
 

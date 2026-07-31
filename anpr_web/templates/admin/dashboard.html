@@ -12,6 +12,7 @@
     <a href="{{ url_for('web.admin_audit_log') }}">Audit log</a>
   </div>
 </section>
+<div class="config-warning" role="status">Demo storage is temporary and may reset.</div>
 {% if email_warning %}<div class="config-warning" role="status">{{ email_warning }}</div>{% endif %}
 <section class="occupancy-card" aria-labelledby="occupancy-heading">
   <h2 id="occupancy-heading">Parking occupancy</h2>
