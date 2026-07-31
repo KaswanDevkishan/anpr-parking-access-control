@@ -84,7 +84,7 @@ def create_app(test_config=None, processor=None):
         ANPR_OCR_API_URL=os.environ.get("ANPR_OCR_API_URL", "").strip(),
         ANPR_OCR_API_KEY=os.environ.get("ANPR_OCR_API_KEY", ""),
         ANPR_OCR_TIMEOUT_SECONDS=os.environ.get(
-            "ANPR_OCR_TIMEOUT_SECONDS", "5"
+            "ANPR_OCR_TIMEOUT_SECONDS", "15"
         ).strip(),
         CAMERA_SAMPLE_INTERVAL_SECONDS=0.75,
         CAMERA_STABLE_SAMPLES=3,
@@ -129,7 +129,7 @@ def create_app(test_config=None, processor=None):
             app.config["ANPR_OCR_TIMEOUT_SECONDS"], "ANPR_OCR_TIMEOUT_SECONDS"
         )
     except ValueError:
-        app.config["ANPR_OCR_TIMEOUT_SECONDS"] = 5
+        app.config["ANPR_OCR_TIMEOUT_SECONDS"] = 15
     if app.config["ANPR_EMAIL_ENABLED"]:
         backend_name = app.config["ANPR_EMAIL_BACKEND"]
         if warning:
@@ -166,12 +166,12 @@ def create_app(test_config=None, processor=None):
     if runtime_config.matching_policy != "exact":
         raise ValueError("The public web demo requires exact matching")
     if app.config["ANPR_WEB_OCR_BACKEND"] not in {
-        "cloud-vision",
+        "ocr-space",
         "easyocr",
         "tesseract",
     }:
         raise ValueError(
-            "ANPR_WEB_OCR_BACKEND must be 'cloud-vision', 'easyocr', or 'tesseract'"
+            "ANPR_WEB_OCR_BACKEND must be 'ocr-space', 'easyocr', or 'tesseract'"
         )
 
     if app.testing:

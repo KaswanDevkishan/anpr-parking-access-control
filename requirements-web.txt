@@ -4,5 +4,5 @@ numpy>=1.24,<3
 opencv-python-headless>=4.8,<5
 Pillow>=10,<12
 python-Levenshtein>=0.23,<1
-# Cloud Vision uses the Python HTTPS/JSON standard library; no provider SDK,
+# OCR.Space uses the Python HTTPS/JSON standard library; no provider SDK,
 # OCR model, Torch runtime, or Tesseract package is installed in the web image.

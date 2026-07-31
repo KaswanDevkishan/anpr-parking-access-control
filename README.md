@@ -17,7 +17,7 @@ The project deliberately keeps each processing concern small and independent:
 1. `main.py` captures frames and owns the display loop.
 2. `plate_detector.py` uses OpenCV contours to identify a plate-like rectangle.
 3. Raspberry Pi uses `ocr_engine.py` and EasyOCR; Flask selects a lazy,
-   provider-neutral OCR adapter and uses Google Cloud Vision over HTTPS on the
+   provider-neutral OCR adapter and uses OCR.Space over HTTPS on the
    free cloud demo. Tesseract remains an optional local fallback.
 4. `matcher.py` normalises results and applies exact authorization matching.
 5. `config.py` provides validated environment configuration and
@@ -32,7 +32,7 @@ The project deliberately keeps each processing concern small and independent:
 - Python 3.9+
 - OpenCV for camera input, image processing, contour detection, and overlays
 - EasyOCR for Raspberry Pi and local optical character recognition
-- Google Cloud Vision REST `TEXT_DETECTION` for hosted web OCR
+- OCR.Space HTTPS API for hosted web OCR
 - NumPy for OpenCV/EasyOCR numerical operations
 - python-Levenshtein for optional experimental fuzzy matching
 - pytest and Ruff for automated checks
@@ -217,7 +217,7 @@ remain functional because their settings come from
 environment variables rather than SQLite. Do not scale this SQLite deployment
 to multiple independent instances. Configure `ANPR_SECRET_KEY`,
 `ANPR_ADMIN_USERNAME`, `ANPR_ADMIN_PASSWORD_HASH`, `ANPR_OCR_API_KEY`,
-`ANPR_OCR_API_URL`, `ANPR_EMAIL_API_KEY`, `ANPR_EMAIL_API_URL`, and
+`ANPR_EMAIL_API_KEY`, `ANPR_EMAIL_API_URL`, and
 `ANPR_EMAIL_FROM` as secret environment values in Render. The production start
 command uses one worker, two threads, no preload, and conservative
 native-library thread limits:
@@ -232,11 +232,9 @@ only for a detected crop during analysis or authenticated registration. Local
 EasyOCR and Tesseract are also lazy-loaded. Keep `ANPR_MATCHING_POLICY=exact`
 for the public demo.
 
-For Google Cloud Vision, enable the Vision API in a Google Cloud project,
-create a restricted API key, and set `ANPR_OCR_API_URL` to
-`https://vision.googleapis.com/v1/images:annotate`. Restrict the key to the
-Vision API and rotate it if it is ever exposed. The adapter sends the key in the
-`X-goog-api-key` request header and never renders provider payloads.
+For OCR.Space, create a free API key and keep
+`ANPR_OCR_API_URL=https://api.ocr.space/parse/image`. The adapter sends the key
+in the `apikey` request header and never renders provider payloads.
 
 ## Configuration
 
@@ -251,10 +249,10 @@ Vision API and rotate it if it is ever exposed. The adapter sends the key in the
 | `ANPR_SCREENSHOT_DIR` | `screenshots` | Local screenshot output |
 | `ANPR_COOLDOWN_SECONDS` | `3` | Repeat log cooldown |
 | `ANPR_MIN_OCR_LENGTH` | `3` | Minimum accepted OCR text length |
-| `ANPR_WEB_OCR_BACKEND` | `easyocr` | Flask OCR: `cloud-vision` on Render, `easyocr` locally, or optional local `tesseract` |
-| `ANPR_OCR_API_URL` | Empty | Google Cloud Vision HTTPS annotate endpoint; configure as a Render secret |
-| `ANPR_OCR_API_KEY` | Empty | Google Cloud Vision API key; configure as a Render secret |
-| `ANPR_OCR_TIMEOUT_SECONDS` | `5` | Short positive cloud OCR request timeout |
+| `ANPR_WEB_OCR_BACKEND` | `easyocr` | Flask OCR: `ocr-space` on Render, `easyocr` locally, or optional local `tesseract` |
+| `ANPR_OCR_API_URL` | Empty | OCR.Space HTTPS parse endpoint |
+| `ANPR_OCR_API_KEY` | Empty | OCR.Space API key; configure as a Render secret |
+| `ANPR_OCR_TIMEOUT_SECONDS` | `15` | Positive cloud OCR request timeout |
 | `ANPR_WEB_TEMP_DIR` | OS temporary directory | Ephemeral web upload directory |
 | `ANPR_SQLITE_PATH` | `data/anpr_web.sqlite3` | Flask vehicle database path |
 | `ANPR_TIMEZONE` | `Asia/Tokyo` | IANA timezone used for display and local-date reporting |

@@ -6,10 +6,10 @@ import re
 import subprocess
 import time
 import unicodedata
-from base64 import b64encode
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 import cv2
 
@@ -32,9 +32,9 @@ def create_web_ocr_backend(
 ):
     """Return an OCR adapter without importing either OCR implementation."""
     normalized = (name or "").strip().lower()
-    if normalized == "cloud-vision":
+    if normalized == "ocr-space":
         return HTTPSOCRBackend(
-            GoogleCloudVisionProvider(api_url, api_key),
+            OCRSpaceProvider(api_url, api_key),
             timeout_seconds=timeout_seconds,
             transport=transport,
         )
@@ -43,7 +43,7 @@ def create_web_ocr_backend(
     if normalized == "easyocr":
         return EasyOCRBackend()
     raise ValueError(
-        "ANPR_WEB_OCR_BACKEND must be 'cloud-vision', 'easyocr', or 'tesseract'"
+        "ANPR_WEB_OCR_BACKEND must be 'ocr-space', 'easyocr', or 'tesseract'"
     )
 
 
@@ -69,31 +69,40 @@ class HTTPSOCRBackend:
         started = self._clock()
         candidates = ()
         selected = ""
+        status = "request-failed"
         try:
             encoded, payload = cv2.imencode(".jpg", plate_image)
             if not encoded:
+                status = "image-encoding-failed"
                 return ""
             request = self.provider.build_request(payload.tobytes())
             response = self._transport(request, self.timeout_seconds)
             candidates = self.provider.parse_response(response)
             selected = _select_plate_candidate(candidates)
+            status = "success" if selected else "no-digits"
             return selected
-        except (
-            HTTPError,
-            URLError,
-            TimeoutError,
-            OSError,
-            ValueError,
-            TypeError,
-            AttributeError,
-            KeyError,
-            IndexError,
-        ):
+        except HTTPError:
+            status = "http-error"
+            return ""
+        except (TimeoutError, OCRTimeout):
+            status = "timeout"
+            return ""
+        except OCRProviderError:
+            status = "provider-error"
+            return ""
+        except (json.JSONDecodeError, TypeError, AttributeError, KeyError, IndexError):
+            status = "malformed-response"
+            return ""
+        except ValueError:
+            status = "configuration-error"
+            return ""
+        except (URLError, OSError):
+            status = "network-error"
             return ""
         finally:
             self.last_diagnostics = OCRDiagnostics(
                 backend=self.provider.name,
-                attempt="HTTPS request",
+                attempt=status,
                 elapsed_seconds=max(0.0, self._clock() - started),
                 raw_result=selected,
                 candidates=tuple(
@@ -114,10 +123,14 @@ class OCRCandidate:
     area: float = 0.0
 
 
-class GoogleCloudVisionProvider:
-    """Translate between the neutral OCR client and Vision TEXT_DETECTION."""
+class OCRProviderError(ValueError):
+    """Raised for a valid provider response that reports processing failure."""
 
-    name = "Google Cloud Vision"
+
+class OCRSpaceProvider:
+    """Translate between the neutral OCR client and OCR.Space's multipart API."""
+
+    name = "OCR.Space"
 
     def __init__(self, api_url, api_key):
         self.api_url = (api_url or "").strip()
@@ -126,61 +139,75 @@ class GoogleCloudVisionProvider:
     def build_request(self, image_bytes):
         if not self.api_url.startswith("https://") or not self.api_key:
             raise ValueError("Cloud OCR HTTPS configuration is incomplete.")
-        body = {
-            "requests": [
-                {
-                    "image": {"content": b64encode(image_bytes).decode("ascii")},
-                    "features": [{"type": "TEXT_DETECTION"}],
-                }
-            ]
-        }
+        boundary = f"anpr-{uuid4().hex}"
+        body = _multipart_body(
+            boundary,
+            (
+                ("language", "eng"),
+                ("isOverlayRequired", "false"),
+                ("scale", "true"),
+                ("detectOrientation", "true"),
+            ),
+            "file",
+            "plate.jpg",
+            "image/jpeg",
+            image_bytes,
+        )
         return Request(
             self.api_url,
-            data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
+            data=body,
             headers={
-                "Content-Type": "application/json",
-                "X-goog-api-key": self.api_key,
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "apikey": self.api_key,
             },
             method="POST",
         )
 
     def parse_response(self, payload):
-        annotations = payload["responses"][0].get("textAnnotations", [])
-        if not isinstance(annotations, list):
+        if not isinstance(payload, dict):
             raise ValueError("Malformed OCR response.")
+        if payload.get("IsErroredOnProcessing") is True or payload.get("ErrorMessage"):
+            raise OCRProviderError("OCR provider could not process the image.")
+        parsed_results = payload.get("ParsedResults")
+        if not isinstance(parsed_results, list) or not parsed_results:
+            raise OCRProviderError("OCR provider returned no parsed results.")
         candidates = []
-        for index, annotation in enumerate(annotations):
-            if not isinstance(annotation, dict):
-                continue
-            text = annotation.get("description", "")
-            vertices = annotation.get("boundingPoly", {}).get("vertices", [])
-            if index == 0 and len(annotations) > 1:
-                # Vision's first annotation covers all text. Keep its candidates
-                # as fallback without letting its full-image polygon outrank an
-                # individual bottom-row annotation.
-                vertices = []
-            ys = [
-                vertex.get("y")
-                for vertex in vertices
-                if isinstance(vertex, dict)
-                and isinstance(vertex.get("y"), (int, float))
-            ]
-            xs = [
-                vertex.get("x")
-                for vertex in vertices
-                if isinstance(vertex, dict)
-                and isinstance(vertex.get("x"), (int, float))
-            ]
-            top = min(ys) if ys else None
-            bottom = max(ys) if ys else None
-            area = (
-                max(0, max(xs) - min(xs)) * max(0, max(ys) - min(ys))
-                if xs and ys
-                else 0.0
-            )
-            for sequence in _digit_sequences(text):
-                candidates.append(OCRCandidate(sequence, top, bottom, area))
+        line_number = 0
+        for result in parsed_results:
+            if not isinstance(result, dict) or not isinstance(
+                result.get("ParsedText"), str
+            ):
+                raise ValueError("Malformed OCR response.")
+            for line in result["ParsedText"].splitlines() or [result["ParsedText"]]:
+                for sequence in _digit_sequences(line):
+                    candidates.append(
+                        OCRCandidate(sequence, line_number, line_number, len(sequence))
+                    )
+                line_number += 1
         return tuple(candidates)
+
+
+def _multipart_body(boundary, fields, file_field, filename, content_type, content):
+    """Build one multipart request body without retaining or logging the image."""
+    marker = boundary.encode("ascii")
+    body = bytearray()
+    for name, value in fields:
+        body.extend(b"--" + marker + b"\r\n")
+        body.extend(
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode(
+                "ascii"
+            )
+        )
+    body.extend(b"--" + marker + b"\r\n")
+    body.extend(
+        (
+            f'Content-Disposition: form-data; name="{file_field}"; '
+            f'filename="{filename}"\r\nContent-Type: {content_type}\r\n\r\n'
+        ).encode("ascii")
+    )
+    body.extend(content)
+    body.extend(b"\r\n--" + marker + b"--\r\n")
+    return bytes(body)
 
 
 def _send_json(request, timeout_seconds):
@@ -195,8 +222,8 @@ def _select_plate_candidate(candidates):
     plausible = [candidate for candidate in candidates if len(candidate.text) in (3, 4)]
     if not plausible:
         return ""
-    # Individual Vision annotations carry geometry. A lower, larger annotation is
-    # preferred over the aggregate first annotation and upper-row region codes.
+    # OCR.Space ParsedText preserves line order. Later plausible lines represent
+    # the lower plate row; length/area breaks ties in favour of the larger value.
     return max(
         plausible,
         key=lambda candidate: (

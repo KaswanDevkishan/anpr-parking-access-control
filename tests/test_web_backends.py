@@ -14,8 +14,8 @@ from anpr_web import create_app
 from anpr_web.mail import HTTPAPIBackend, SMTPBackend
 from anpr_web.ocr import (
     EasyOCRBackend,
-    GoogleCloudVisionProvider,
     HTTPSOCRBackend,
+    OCRSpaceProvider,
     OCRTimeout,
     TesseractOCRBackend,
     _run_tesseract,
@@ -54,72 +54,62 @@ def test_health_and_normal_pages_do_not_initialize_ocr(tmp_path):
     assert processor._backend is None
 
 
-def _vision_response(*annotations):
-    return {"responses": [{"textAnnotations": list(annotations)}]}
-
-
-def _annotation(text, left=0, top=0, right=100, bottom=20):
-    return {
-        "description": text,
-        "boundingPoly": {
-            "vertices": [
-                {"x": left, "y": top},
-                {"x": right, "y": top},
-                {"x": right, "y": bottom},
-                {"x": left, "y": bottom},
-            ]
-        },
+def _ocr_space_response(text="1238", **overrides):
+    payload = {
+        "ParsedResults": [{"ParsedText": text}],
+        "OCRExitCode": 1,
+        "IsErroredOnProcessing": False,
+        "ErrorMessage": None,
     }
+    payload.update(overrides)
+    return payload
 
 
-def _cloud_backend(response=None, error=None):
+def _ocr_space_backend(response=None, error=None, api_key="test-secret"):
     def transport(_request, _timeout):
         if error:
             raise error
         return response
 
     return HTTPSOCRBackend(
-        GoogleCloudVisionProvider(
-            "https://vision.googleapis.test/v1/images:annotate", "test-secret"
-        ),
+        OCRSpaceProvider("https://api.ocr.space/parse/image", api_key),
         transport=transport,
     )
 
 
-def test_cloud_vision_success_returns_1238():
-    backend = _cloud_backend(_vision_response(_annotation("1238")))
+def test_ocr_space_success_returns_1238():
+    backend = _ocr_space_backend(_ocr_space_response())
     assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
 
 
-def test_cloud_vision_request_uses_text_detection_and_keeps_key_out_of_payload():
-    provider = GoogleCloudVisionProvider(
-        "https://vision.googleapis.test/v1/images:annotate", "test-secret"
-    )
+def test_ocr_space_request_is_multipart_and_keeps_key_out_of_payload():
+    provider = OCRSpaceProvider("https://api.ocr.space/parse/image", "test-secret")
     request = provider.build_request(b"synthetic-image")
-    payload = json.loads(request.data)
-    assert payload["requests"][0]["features"] == [{"type": "TEXT_DETECTION"}]
-    assert payload["requests"][0]["image"]["content"]
-    assert request.headers["X-goog-api-key"] == "test-secret"
+    assert request.get_method() == "POST"
+    assert request.headers["Apikey"] == "test-secret"
+    assert request.headers["Content-type"].startswith("multipart/form-data; boundary=")
+    for expected in (
+        b'name="file"; filename="plate.jpg"',
+        b'name="language"\r\n\r\neng',
+        b'name="isOverlayRequired"\r\n\r\nfalse',
+        b'name="scale"\r\n\r\ntrue',
+        b'name="detectOrientation"\r\n\r\ntrue',
+        b"synthetic-image",
+    ):
+        assert expected in request.data
     assert "test-secret" not in request.full_url
     assert b"test-secret" not in request.data
 
 
-def test_cloud_vision_normalizes_full_width_digits():
-    backend = _cloud_backend(_vision_response(_annotation("１２３８")))
+def test_ocr_space_normalizes_full_width_digits():
+    backend = _ocr_space_backend(_ocr_space_response("１２３８"))
     assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
 
 
-def test_cloud_vision_prefers_plausible_large_bottom_row():
-    backend = _cloud_backend(
-        _vision_response(
-            _annotation("品川 500\nあ 12-38"),
-            _annotation("500", 20, 5, 60, 15),
-            _annotation("12", 10, 35, 30, 55),
-            _annotation("1238", 20, 60, 120, 95),
-        )
-    )
+def test_ocr_space_multiple_lines_prefer_plausible_lower_row():
+    backend = _ocr_space_backend(_ocr_space_response("品川 500\n分類 12\n1238"))
     assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
-    assert backend.last_diagnostics.candidates == ("500", "12", "38", "1238")
+    assert backend.last_diagnostics.candidates == ("500", "12", "1238")
 
 
 @pytest.mark.parametrize(
@@ -132,19 +122,58 @@ def test_cloud_vision_prefers_plausible_large_bottom_row():
     ],
     ids=["timeout", "provider-error"],
 )
-def test_cloud_vision_network_failure_returns_empty_result(error):
-    backend = _cloud_backend(error=error)
+def test_ocr_space_network_failure_returns_empty_result(error):
+    backend = _ocr_space_backend(error=error)
     assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == ""
     assert backend.last_diagnostics.raw_result == ""
 
 
-@pytest.mark.parametrize("payload", [{}, {"responses": []}, {"responses": "bad"}])
-def test_cloud_vision_malformed_response_returns_empty_result(payload):
-    backend = _cloud_backend(payload)
+def test_ocr_space_missing_key_fails_safely():
+    backend = _ocr_space_backend(_ocr_space_response(), api_key="")
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == ""
+    assert backend.last_diagnostics.attempt == "configuration-error"
+
+
+def test_ocr_space_provider_error_fails_safely():
+    backend = _ocr_space_backend(
+        _ocr_space_response(
+            "",
+            ParsedResults=[],
+            IsErroredOnProcessing=True,
+            ErrorMessage=["Unable to recognize the file"],
+        )
+    )
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == ""
+    assert backend.last_diagnostics.attempt == "provider-error"
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"ParsedResults": "bad"}])
+def test_ocr_space_malformed_response_returns_empty_result(payload):
+    backend = _ocr_space_backend(payload)
     assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == ""
 
 
-def test_cloud_mode_is_lazy_and_does_not_load_or_run_local_ocr(monkeypatch, tmp_path):
+def test_ocr_space_malformed_json_fails_safely():
+    def transport(_request, _timeout):
+        raise json.JSONDecodeError("bad JSON", "{", 0)
+
+    backend = HTTPSOCRBackend(
+        OCRSpaceProvider("https://api.ocr.space/parse/image", "test-secret"),
+        transport=transport,
+    )
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == ""
+    assert backend.last_diagnostics.attempt == "malformed-response"
+
+
+def test_ocr_space_success_without_digits_fails_safely():
+    backend = _ocr_space_backend(_ocr_space_response("NO PLATE"))
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == ""
+    assert backend.last_diagnostics.attempt == "no-digits"
+
+
+def test_render_mode_is_lazy_and_does_not_load_or_run_local_ocr(
+    monkeypatch, tmp_path
+):
     sys.modules.pop("easyocr", None)
     sys.modules.pop("torch", None)
     process_calls = []
@@ -156,8 +185,8 @@ def test_cloud_mode_is_lazy_and_does_not_load_or_run_local_ocr(monkeypatch, tmp_
         {
             "TESTING": True,
             "SQLITE_PATH": str(tmp_path / "cloud.sqlite3"),
-            "ANPR_WEB_OCR_BACKEND": "cloud-vision",
-            "ANPR_OCR_API_URL": "https://vision.googleapis.test/v1/images:annotate",
+            "ANPR_WEB_OCR_BACKEND": "ocr-space",
+            "ANPR_OCR_API_URL": "https://api.ocr.space/parse/image",
             "ANPR_OCR_API_KEY": "never-render-this-key",
         }
     )
