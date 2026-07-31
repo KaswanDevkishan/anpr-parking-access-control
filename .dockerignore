@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+.pytest_cache
+.ruff_cache
+__pycache__
+*.py[cod]
+*.sqlite3
+venv
+.venv
+screenshots
+data/vehicles.csv

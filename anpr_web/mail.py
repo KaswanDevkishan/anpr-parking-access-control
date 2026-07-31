@@ -1,6 +1,9 @@
 """Privacy-conscious exit-summary email delivery."""
 
+import json
 import smtplib
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -38,6 +41,43 @@ class SMTPBackend:
                 client.send_message(message)
         except (OSError, smtplib.SMTPException) as exc:
             raise MailDeliveryError("smtp_delivery_failed") from exc
+
+
+class HTTPAPIBackend:
+    """Provider-neutral JSON email adapter using outbound HTTPS."""
+
+    def __init__(self, config, opener=urllib.request.urlopen):
+        self.config = config
+        self.opener = opener
+
+    def send(self, message):
+        html_part = message.get_body(preferencelist=("html",))
+        text_part = message.get_body(preferencelist=("plain",))
+        payload = {
+            "from": str(message["From"]),
+            "to": str(message["To"]),
+            "subject": str(message["Subject"]),
+            "text": text_part.get_content() if text_part else "",
+            "html": html_part.get_content() if html_part else "",
+        }
+        request = urllib.request.Request(
+            self.config["ANPR_EMAIL_API_URL"],
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.config['ANPR_EMAIL_API_KEY']}",
+                "Content-Type": "application/json",
+                "User-Agent": "anpr-access-decision-prototype",
+            },
+            method="POST",
+        )
+        try:
+            with self.opener(
+                request, timeout=self.config["ANPR_EMAIL_TIMEOUT_SECONDS"]
+            ) as response:
+                if not 200 <= response.status < 300:
+                    raise MailDeliveryError("http_api_delivery_failed")
+        except (OSError, urllib.error.URLError, urllib.error.HTTPError) as exc:
+            raise MailDeliveryError("http_api_delivery_failed") from exc
 
 
 class DryRunBackend:

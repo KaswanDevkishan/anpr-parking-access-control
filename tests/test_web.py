@@ -1,4 +1,5 @@
 import re
+import urllib.error
 from io import BytesIO
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from werkzeug.security import generate_password_hash
 
 from anpr_web import create_app
 from anpr_web.database import VehicleStore
+from anpr_web.mail import HTTPAPIBackend
 from anpr_web.processing import ImageReview, ProcessingResult, WebProcessor
 from config import load_config
 
@@ -883,6 +885,36 @@ def test_email_failure_preserves_exit_and_admin_retry_is_idempotent(app_factory)
     assert len(backend.messages) == 1
     assert post(client, retry_path).status_code == 409
     assert len(backend.messages) == 1
+
+
+def test_http_api_failure_preserves_recorded_exit(app_factory):
+    def failed_https_request(_request, timeout):
+        assert timeout == 5
+        raise urllib.error.URLError("provider unavailable")
+
+    config = {
+        "ANPR_EMAIL_API_URL": "https://mail.example.test/send",
+        "ANPR_EMAIL_API_KEY": "test-key",
+        "ANPR_EMAIL_TIMEOUT_SECONDS": 5,
+    }
+    backend = HTTPAPIBackend(config, opener=failed_https_request)
+    app = email_app(
+        app_factory,
+        backend,
+        ANPR_EMAIL_BACKEND="http-api",
+        ANPR_EMAIL_API_URL=config["ANPR_EMAIL_API_URL"],
+        ANPR_EMAIL_API_KEY=config["ANPR_EMAIL_API_KEY"],
+    )
+    client = app.test_client()
+    store = app.extensions["anpr_store"]
+    enable_seed_vehicle_email(store)
+    checkpoint = store.apply_checkpoint_detail("1001", "entry")
+
+    response = post_image(client)
+
+    assert b"Visit recorded, but email delivery failed" in response.data
+    assert store.visit_for_notification(checkpoint.visit_id)["exited_at"] is not None
+    assert store.delivery_for_visit(checkpoint.visit_id)["status"] == "failed"
 
 
 def test_occupancy_capacity_and_deleted_vehicle_rules(app_factory):

@@ -12,8 +12,9 @@ import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from matcher import find_match
-from ocr_engine import load_ocr, read_plate
 from plate_detector import detect_plate_for_upload
+
+from .ocr import create_web_ocr_backend
 
 ALLOWED_FORMATS = {"JPEG": ".jpg", "PNG": ".png"}
 
@@ -52,14 +53,33 @@ class WebProcessor:
         self,
         runtime_config,
         detector=detect_plate_for_upload,
-        ocr=read_plate,
-        ocr_loader=load_ocr,
+        ocr=None,
+        ocr_loader=None,
+        backend_name="easyocr",
     ):
         self.config = runtime_config
         self.detector = detector
         self.ocr = ocr
         self.ocr_loader = ocr_loader
+        self.backend_name = backend_name
+        self._backend = None
         self._reader = None
+
+    def _read_plate(self, plate_image):
+        if self.ocr is not None:
+            if self._reader is None:
+                self._reader = self.ocr_loader() if self.ocr_loader else None
+            return self.ocr(
+                plate_image,
+                self._reader,
+                confidence_threshold=self.config.ocr_confidence_threshold,
+            )
+        if self._backend is None:
+            self._backend = create_web_ocr_backend(self.backend_name)
+        return self._backend.read(
+            plate_image,
+            confidence_threshold=self.config.ocr_confidence_threshold,
+        )
 
     def process(self, image_path, database):
         frame = cv2.imread(str(image_path))
@@ -86,13 +106,7 @@ class WebProcessor:
                 None,
             )
 
-        if self._reader is None:
-            self._reader = self.ocr_loader()
-        ocr_text = self.ocr(
-            plate_image,
-            self._reader,
-            confidence_threshold=self.config.ocr_confidence_threshold,
-        ).strip()
+        ocr_text = self._read_plate(plate_image).strip()
 
         usable = len(ocr_text) >= self.config.min_ocr_length
         match = (
@@ -139,13 +153,7 @@ class WebProcessor:
                 "No plate-like region was found. Enter the plate manually.",
             )
 
-        if self._reader is None:
-            self._reader = self.ocr_loader()
-        ocr_text = self.ocr(
-            plate_image,
-            self._reader,
-            confidence_threshold=self.config.ocr_confidence_threshold,
-        ).strip()
+        ocr_text = self._read_plate(plate_image).strip()
         error = None
         if len(ocr_text) < self.config.min_ocr_length:
             ocr_text = ""

@@ -1,14 +1,14 @@
 services:
   - type: web
     name: anpr-access-decision-demo
-    runtime: python
+    runtime: docker
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn wsgi:app
+    dockerfilePath: ./Dockerfile
+    dockerCommand: gunicorn --workers 1 --threads 2 --timeout 120 wsgi:app
     healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
+      - key: ANPR_WEB_OCR_BACKEND
+        value: tesseract
       - key: ANPR_MATCHING_POLICY
         value: exact
       - key: ANPR_SQLITE_PATH
@@ -26,17 +26,11 @@ services:
       - key: ANPR_EMAIL_ENABLED
         value: "true"
       - key: ANPR_EMAIL_BACKEND
-        value: smtp
-      - key: ANPR_SMTP_HOST
-        value: smtp.gmail.com
-      - key: ANPR_SMTP_PORT
-        value: "587"
-      - key: ANPR_SMTP_USERNAME
+        value: http-api
+      - key: ANPR_EMAIL_API_KEY
         sync: false
-      - key: ANPR_SMTP_PASSWORD
+      - key: ANPR_EMAIL_API_URL
         sync: false
-      - key: ANPR_SMTP_USE_TLS
-        value: "true"
       - key: ANPR_EMAIL_FROM
         sync: false
       - key: ANPR_EMAIL_FROM_NAME
@@ -45,5 +39,13 @@ services:
         value: University Parking Demo
       - key: ANPR_EMAIL_TIMEOUT_SECONDS
         value: "5"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: MALLOC_ARENA_MAX
+        value: "2"
       - key: ANPR_PARKING_CAPACITY
         sync: false

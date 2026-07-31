@@ -16,7 +16,8 @@ The project deliberately keeps each processing concern small and independent:
 
 1. `main.py` captures frames and owns the display loop.
 2. `plate_detector.py` uses OpenCV contours to identify a plate-like rectangle.
-3. `ocr_engine.py` preprocesses the crop and reads text with EasyOCR.
+3. Raspberry Pi uses `ocr_engine.py` and EasyOCR; Flask selects a lazy OCR
+   adapter and uses digit-only Tesseract on the free cloud demo.
 4. `matcher.py` normalises results and applies exact authorization matching.
 5. `config.py` provides validated environment configuration and
    repository-relative paths.
@@ -29,7 +30,8 @@ The project deliberately keeps each processing concern small and independent:
 
 - Python 3.9+
 - OpenCV for camera input, image processing, contour detection, and overlays
-- EasyOCR for optical character recognition
+- EasyOCR for Raspberry Pi and local optical character recognition
+- Tesseract for lightweight digit OCR in the Render Free web container
 - NumPy for OpenCV/EasyOCR numerical operations
 - python-Levenshtein for optional experimental fuzzy matching
 - pytest and Ruff for automated checks
@@ -121,6 +123,7 @@ export ANPR_SQLITE_PATH=data/anpr_web.sqlite3
 export ANPR_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 export ANPR_ADMIN_USERNAME=your-local-admin-name
 export ANPR_ADMIN_PASSWORD_HASH="$(python3 -c 'from werkzeug.security import generate_password_hash; import getpass; print(generate_password_hash(getpass.getpass()))')"
+export ANPR_WEB_OCR_BACKEND=easyocr
 export FLASK_APP=wsgi:app
 export FLASK_DEBUG=1
 flask run
@@ -175,7 +178,10 @@ idempotent delivery record is created. SMTP failure cannot reverse the exit or
 change the access decision. Failed deliveries can be retried by an authenticated
 administrator using a CSRF-protected POST action; sent deliveries cannot be
 resent. The local `dry-run` backend avoids network access and retains messages
-in memory only.
+in memory only. SMTP remains available for local or paid deployments. Render
+Free uses a provider-neutral HTTP adapter because SMTP ports are blocked. It
+sends JSON over outbound HTTPS using only environment configuration. Missing
+or non-HTTPS API settings disable delivery safely without changing the exit.
 
 The admin dashboard reports open visits for current vehicles. A vehicle with an
 open visit must exit before an administrator can permanently delete its registry
@@ -193,29 +199,33 @@ names, and deleted after each request. Original and cropped image-registration
 images are not retained by default. Use only synthetic or properly consented
 images.
 
-Render is configured by `render.yaml` as a free Python web service. Its SQLite
-database is created in writable ephemeral storage at `/tmp/anpr_web.sqlite3`;
+Render is configured by `render.yaml` as a free Docker web service. The image
+installs minimal Tesseract language data and lightweight web dependencies;
+EasyOCR and PyTorch are not installed. SQLite is created in writable ephemeral
+storage at `/tmp/anpr_web.sqlite3`;
 no persistent disk or paid resource is requested. When that file is absent, the
 application creates and migrates the schema automatically, then recreates the
 fictional seed vehicles from `data/vehicles.example.csv`.
 
 Free-tier storage is temporary: vehicles added through the admin may disappear
 after a restart or redeployment, and access history, notification-delivery
-records, and administrative audit records may reset. SMTP email configuration
-and real email sending remain functional because their settings come from
+records, and administrative audit records may reset. HTTPS email API settings
+remain functional because their settings come from
 environment variables rather than SQLite. Do not scale this SQLite deployment
 to multiple independent instances. Configure `ANPR_SECRET_KEY`,
-`ANPR_ADMIN_USERNAME`, `ANPR_ADMIN_PASSWORD_HASH`, `ANPR_SMTP_USERNAME`,
-`ANPR_SMTP_PASSWORD`, and `ANPR_EMAIL_FROM` as secret environment values in
-Render. The production start command is:
+`ANPR_ADMIN_USERNAME`, `ANPR_ADMIN_PASSWORD_HASH`, `ANPR_EMAIL_API_KEY`,
+`ANPR_EMAIL_API_URL`, and `ANPR_EMAIL_FROM` as secret environment values in
+Render. The production start command uses one worker, two threads, no preload,
+and conservative native-library thread limits:
 
 ```bash
-gunicorn wsgi:app
+gunicorn --workers 1 --threads 2 --timeout 120 wsgi:app
 ```
 
-The service health check is available at `/health`. EasyOCR remains lazy-loaded,
-although the first analysis request may be slow while the OCR model initializes.
-Keep `ANPR_MATCHING_POLICY=exact` for the public demo.
+The service health check is available at `/health`. Health, normal pages, login,
+and history never initialize OCR; Tesseract starts only when a scan needs it.
+Local EasyOCR is also lazy-loaded. Keep `ANPR_MATCHING_POLICY=exact` for the
+public demo.
 
 ## Configuration
 
@@ -230,6 +240,7 @@ Keep `ANPR_MATCHING_POLICY=exact` for the public demo.
 | `ANPR_SCREENSHOT_DIR` | `screenshots` | Local screenshot output |
 | `ANPR_COOLDOWN_SECONDS` | `3` | Repeat log cooldown |
 | `ANPR_MIN_OCR_LENGTH` | `3` | Minimum accepted OCR text length |
+| `ANPR_WEB_OCR_BACKEND` | `easyocr` | Flask OCR: `easyocr` locally or `tesseract` on Render Free |
 | `ANPR_WEB_TEMP_DIR` | OS temporary directory | Ephemeral web upload directory |
 | `ANPR_SQLITE_PATH` | `data/anpr_web.sqlite3` | Flask vehicle database path |
 | `ANPR_TIMEZONE` | `Asia/Tokyo` | IANA timezone used for display and local-date reporting |
@@ -240,7 +251,9 @@ Keep `ANPR_MATCHING_POLICY=exact` for the public demo.
 | `ANPR_APPLICATION_NAME` | `Example Campus Parking` | Fictional name used in summaries |
 | `ANPR_PARKING_CAPACITY` | Empty | Optional positive capacity for occupancy reporting |
 | `ANPR_EMAIL_ENABLED` | `false` | Enables configured exit-summary delivery |
-| `ANPR_EMAIL_BACKEND` | `smtp` | `smtp` or local/test `dry-run` backend |
+| `ANPR_EMAIL_BACKEND` | `smtp` | `smtp`, Render-compatible `http-api`, or local/test `dry-run` |
+| `ANPR_EMAIL_API_KEY` | Empty | HTTPS email-provider token; configure as a secret |
+| `ANPR_EMAIL_API_URL` | Empty | HTTPS email-provider send endpoint |
 | `ANPR_SMTP_HOST` | Empty | SMTP server hostname |
 | `ANPR_SMTP_PORT` | `587` | Positive SMTP port |
 | `ANPR_SMTP_USERNAME` | Empty | Optional SMTP username; configure as a secret |
@@ -269,8 +282,8 @@ destination, status, timestamps, and a generic error code; message bodies and
 SMTP responses are not stored. Provider configuration belongs in deployment
 secrets, never source files. See `/privacy` for the in-application summary.
 
-On Render, email is enabled by the Blueprint and becomes ready once the SMTP
-username, password, and sender secrets are configured. Email settings survive
+On Render, email is enabled by the Blueprint and becomes ready once the HTTPS
+API URL, API key, and sender secrets are configured. Email settings survive
 service restarts, but the free service's ephemeral SQLite vehicle, visit,
 delivery, and audit data does not. Fictional seed vehicles are recreated
 automatically whenever the database file is recreated.
@@ -340,8 +353,9 @@ gunicorn --check-config wsgi:app
 
 ## Description
 
-> Built a modular Python ANPR access-decision prototype using OpenCV and
-> EasyOCR, with an unchanged Raspberry Pi CSV workflow and a Flask/SQLite
+> Built a modular Python ANPR access-decision prototype using OpenCV,
+> Raspberry Pi EasyOCR, and lightweight web Tesseract, with an unchanged
+> Raspberry Pi CSV workflow and a Flask/SQLite
 > portfolio application featuring exact active-record authorization,
 > privacy-aware uploads, admin authentication, CSRF protection, and explicit
 > vehicle lifecycle management.

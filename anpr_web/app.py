@@ -11,7 +11,7 @@ from flask import Flask, render_template
 from config import REPOSITORY_ROOT, load_config
 
 from .database import VehicleStore
-from .mail import DryRunBackend, MailService, SMTPBackend
+from .mail import DryRunBackend, HTTPAPIBackend, MailService, SMTPBackend
 from .processing import WebProcessor
 from .routes import web
 from .security import csrf_token, protect_post_requests
@@ -63,6 +63,8 @@ def create_app(test_config=None, processor=None):
         ANPR_PARKING_CAPACITY=os.environ.get("ANPR_PARKING_CAPACITY", "").strip(),
         ANPR_EMAIL_ENABLED=_environment_bool("ANPR_EMAIL_ENABLED"),
         ANPR_EMAIL_BACKEND=os.environ.get("ANPR_EMAIL_BACKEND", "smtp").strip().lower(),
+        ANPR_EMAIL_API_KEY=os.environ.get("ANPR_EMAIL_API_KEY", ""),
+        ANPR_EMAIL_API_URL=os.environ.get("ANPR_EMAIL_API_URL", "").strip(),
         ANPR_SMTP_HOST=os.environ.get("ANPR_SMTP_HOST", "").strip(),
         ANPR_SMTP_PORT=os.environ.get("ANPR_SMTP_PORT", "587").strip(),
         ANPR_SMTP_USERNAME=os.environ.get("ANPR_SMTP_USERNAME", "").strip(),
@@ -76,6 +78,9 @@ def create_app(test_config=None, processor=None):
             "ANPR_EMAIL_TIMEOUT_SECONDS", "5"
         ).strip(),
         CAMERA_FRAME_MAX_BYTES=2 * 1024 * 1024,
+        ANPR_WEB_OCR_BACKEND=os.environ.get("ANPR_WEB_OCR_BACKEND", "easyocr")
+        .strip()
+        .lower(),
         CAMERA_SAMPLE_INTERVAL_SECONDS=0.75,
         CAMERA_STABLE_SAMPLES=3,
         CAMERA_SESSION_TIMEOUT_SECONDS=30,
@@ -118,10 +123,15 @@ def create_app(test_config=None, processor=None):
         backend_name = app.config["ANPR_EMAIL_BACKEND"]
         if warning:
             pass
-        elif backend_name not in {"smtp", "dry-run"}:
+        elif backend_name not in {"smtp", "http-api", "dry-run"}:
             warning = "Email is enabled but ANPR_EMAIL_BACKEND is invalid."
         elif backend_name == "smtp" and not app.config["ANPR_SMTP_HOST"]:
             warning = "Email is enabled but ANPR_SMTP_HOST is not configured."
+        elif backend_name == "http-api" and (
+            not app.config["ANPR_EMAIL_API_KEY"]
+            or not app.config["ANPR_EMAIL_API_URL"].startswith("https://")
+        ):
+            warning = "Email is enabled but the HTTPS email API is not configured."
         elif not app.config["ANPR_EMAIL_FROM"]:
             warning = "Email is enabled but ANPR_EMAIL_FROM is not configured."
     app.config["ANPR_EMAIL_CONFIGURATION_WARNING"] = warning
@@ -144,6 +154,8 @@ def create_app(test_config=None, processor=None):
     )
     if runtime_config.matching_policy != "exact":
         raise ValueError("The public web demo requires exact matching")
+    if app.config["ANPR_WEB_OCR_BACKEND"] not in {"easyocr", "tesseract"}:
+        raise ValueError("ANPR_WEB_OCR_BACKEND must be 'easyocr' or 'tesseract'")
 
     if app.testing:
         app.config["SESSION_COOKIE_SECURE"] = False
@@ -152,16 +164,20 @@ def create_app(test_config=None, processor=None):
     store.initialize(app.config["SEED_CSV_PATH"])
     app.extensions["anpr_store"] = store
     app.extensions["anpr_runtime_config"] = runtime_config
-    app.extensions["anpr_processor"] = processor or WebProcessor(runtime_config)
+    app.extensions["anpr_processor"] = processor or WebProcessor(
+        runtime_config, backend_name=app.config["ANPR_WEB_OCR_BACKEND"]
+    )
     app.extensions["anpr_login_attempts"] = {}
     app.extensions["anpr_camera_samples"] = {}
     backend = app.config.get("ANPR_MAIL_BACKEND")
     if backend is None:
-        backend = (
-            DryRunBackend()
-            if app.config["ANPR_EMAIL_BACKEND"] == "dry-run"
-            else SMTPBackend(app.config)
-        )
+        backend_name = app.config["ANPR_EMAIL_BACKEND"]
+        if backend_name == "dry-run":
+            backend = DryRunBackend()
+        elif backend_name == "http-api":
+            backend = HTTPAPIBackend(app.config)
+        else:
+            backend = SMTPBackend(app.config)
     app.extensions["anpr_mail"] = MailService(app.config, backend)
 
     temp_path = app.config["UPLOAD_TEMP_DIR"]
