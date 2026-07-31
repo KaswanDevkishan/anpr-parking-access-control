@@ -3,11 +3,13 @@ import sys
 from email.message import EmailMessage
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 
 from anpr_web import create_app
 from anpr_web.mail import HTTPAPIBackend, SMTPBackend
 from anpr_web.ocr import EasyOCRBackend, TesseractOCRBackend
+from anpr_web.processing import WebProcessor
 
 
 def test_tesseract_selection_does_not_import_heavy_ocr_modules(tmp_path):
@@ -48,6 +50,102 @@ def test_tesseract_extracts_longest_mocked_digit_run(monkeypatch):
     )
     image = np.zeros((40, 120, 3), dtype=np.uint8)
     assert TesseractOCRBackend().read(image) == "3456"
+
+
+def _mock_tesseract_pipeline(monkeypatch, outputs):
+    monkeypatch.setattr(
+        "anpr_web.ocr._plate_crops",
+        lambda image: (("full", image), ("lower_55_percent", image)),
+    )
+    monkeypatch.setattr(
+        "anpr_web.ocr._preprocessing_variants",
+        lambda image: (
+            (name, np.full((2, 2), index, dtype=np.uint8))
+            for index, name in enumerate(
+                ("grayscale", "enlarged", "otsu", "inverted_otsu", "adaptive")
+            )
+        ),
+    )
+    crop_calls = {"count": 0}
+
+    def fake_run(image, psm):
+        pass_index = crop_calls["count"]
+        crop_calls["count"] += 1
+        crop = "full" if pass_index < len(TesseractOCRBackend.PASSES) else "lower"
+        variant = (
+            "grayscale",
+            "enlarged",
+            "otsu",
+            "inverted_otsu",
+            "adaptive",
+        )[int(image[0, 0])]
+        return outputs.get((crop, variant, psm), "")
+
+    monkeypatch.setattr("anpr_web.ocr._run_tesseract", fake_run)
+
+
+def test_tesseract_uses_lower_crop_when_full_image_is_empty(monkeypatch):
+    _mock_tesseract_pipeline(monkeypatch, {("lower", "grayscale", 6): "1238"})
+    backend = TesseractOCRBackend()
+    assert backend.read(np.zeros((40, 120, 3), dtype=np.uint8)) == "1238"
+    assert backend.last_diagnostics.selected.crop == "lower_55_percent"
+
+
+def test_tesseract_prefers_four_digit_lower_row_over_top_classification(monkeypatch):
+    _mock_tesseract_pipeline(
+        monkeypatch,
+        {
+            ("full", "grayscale", 6): "338",
+            ("lower", "grayscale", 6): "1238",
+        },
+    )
+    assert TesseractOCRBackend().read(np.zeros((40, 120, 3), dtype=np.uint8)) == "1238"
+
+
+def test_tesseract_inverted_threshold_can_succeed(monkeypatch):
+    _mock_tesseract_pipeline(monkeypatch, {("lower", "inverted_otsu", 8): "1238"})
+    backend = TesseractOCRBackend()
+    assert backend.read(np.zeros((40, 120, 3), dtype=np.uint8)) == "1238"
+    assert backend.last_diagnostics.selected.preprocessing == "inverted_otsu"
+
+
+def test_tesseract_tries_multiple_page_segmentation_modes(monkeypatch):
+    _mock_tesseract_pipeline(monkeypatch, {("lower", "otsu", 13): "1238"})
+    backend = TesseractOCRBackend()
+    assert backend.read(np.zeros((40, 120, 3), dtype=np.uint8)) == "1238"
+    assert backend.last_diagnostics.selected.psm == 13
+
+
+def test_tesseract_no_usable_digits_stays_empty(monkeypatch):
+    _mock_tesseract_pipeline(monkeypatch, {})
+    assert TesseractOCRBackend().read(np.zeros((40, 120, 3), dtype=np.uint8)) == ""
+
+
+def test_exact_authorization_occurs_only_after_ocr_returns_registered_number(
+    tmp_path,
+):
+    image_path = tmp_path / "plate.png"
+    cv2.imwrite(str(image_path), np.zeros((20, 60, 3), dtype=np.uint8))
+    runtime = SimpleNamespace(
+        ocr_confidence_threshold=0.5,
+        min_ocr_length=3,
+        matching_policy="exact",
+        match_tolerance=0,
+    )
+
+    def detector(frame):
+        return frame, (0, 0, 60, 20), "Close-up fallback"
+
+    database = {"1238": {"name": "Fictional", "id": "X", "type": "test"}}
+
+    empty = WebProcessor(runtime, detector=detector, ocr=lambda *_args, **_kw: "")
+    assert empty.process(image_path, database).status == "NOT ALLOWED"
+    recognized = WebProcessor(
+        runtime, detector=detector, ocr=lambda *_args, **_kw: "1238"
+    )
+    assert recognized.process(image_path, database).status == "ALLOWED"
+    unknown = WebProcessor(runtime, detector=detector, ocr=lambda *_args, **_kw: "9999")
+    assert unknown.process(image_path, database).status == "NOT ALLOWED"
 
 
 def test_easyocr_adapter_remains_available_lazily(monkeypatch):
