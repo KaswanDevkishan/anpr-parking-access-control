@@ -94,6 +94,7 @@ def test_ocr_space_request_is_multipart_and_keeps_key_out_of_payload():
         b'name="isOverlayRequired"\r\n\r\nfalse',
         b'name="scale"\r\n\r\ntrue',
         b'name="detectOrientation"\r\n\r\ntrue',
+        b'name="OCREngine"\r\n\r\n2',
         b"synthetic-image",
     ):
         assert expected in request.data
@@ -110,6 +111,34 @@ def test_ocr_space_multiple_lines_prefer_plausible_lower_row():
     backend = _ocr_space_backend(_ocr_space_response("品川 500\n分類 12\n1238"))
     assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
     assert backend.last_diagnostics.candidates == ("500", "12", "1238")
+
+
+def test_ocr_space_prefers_four_digits_across_variants():
+    responses = iter((_ocr_space_response("238"), _ocr_space_response("1238")))
+
+    def transport(_request, _timeout):
+        return next(responses)
+
+    backend = HTTPSOCRBackend(
+        OCRSpaceProvider("https://api.ocr.space/parse/image", "test-secret"),
+        transport=transport,
+    )
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
+    assert backend.last_diagnostics.candidates == ("238", "1238")
+    assert tuple(item.name for item in backend.last_diagnostics.variants) == (
+        "full_2x",
+        "lower_60pct_contrast_3x",
+    )
+
+
+def test_ocr_space_does_not_pad_three_digit_result():
+    backend = _ocr_space_backend(_ocr_space_response("238"))
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "238"
+
+
+def test_ocr_space_preserves_leading_one():
+    backend = _ocr_space_backend(_ocr_space_response("1238"))
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
 
 
 @pytest.mark.parametrize(
@@ -290,6 +319,23 @@ def test_processor_timeout_returns_normal_result(tmp_path):
         result.reason
         == "OCR timed out. Please try a clearer or more tightly cropped image."
     )
+
+
+def test_exact_registered_1238_is_allowed(tmp_path):
+    processor, image_path = _blocking_processor(
+        tmp_path, lambda *_args, **_kwargs: "1238"
+    )
+    database = {
+        "1238": {
+            "name": "Synthetic Driver",
+            "id": "DEMO-1",
+            "type": "visitor",
+        }
+    }
+    result = processor.process(image_path, database)
+    assert result.status == "ALLOWED"
+    assert result.match["matched_plate"] == "1238"
+    assert result.match["distance"] == 0
 
 
 def _blocking_processor(tmp_path, ocr):

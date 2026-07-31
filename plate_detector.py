@@ -18,6 +18,7 @@ LIVE_MAX_AREA_RATIO = 0.35
 UPLOAD_MAX_AREA_RATIO = 0.9
 CLOSE_UP_MIN_ASPECT_RATIO = 1.8
 CLOSE_UP_MAX_ASPECT_RATIO = 2.4
+UPLOAD_HORIZONTAL_PADDING_RATIO = 0.10
 
 
 def _preprocess(frame):
@@ -66,10 +67,12 @@ def detect_plate_for_upload(frame):
     """
     plate_image, bbox = detect_plate(frame)
     if plate_image is not None and bbox is not None:
+        plate_image, bbox = _pad_upload_crop(frame, bbox)
         return plate_image, bbox, "Contour detection"
 
     plate_image, bbox = _detect_plate_with_max_area(frame, UPLOAD_MAX_AREA_RATIO)
     if plate_image is not None and bbox is not None:
+        plate_image, bbox = _pad_upload_crop(frame, bbox)
         return plate_image, bbox, "Contour detection"
 
     height, width = frame.shape[:2]
@@ -78,6 +81,16 @@ def detect_plate_for_upload(frame):
         return frame, (0, 0, width, height), "Close-up fallback"
 
     return None, None, None
+
+
+def _pad_upload_crop(frame, bbox):
+    """Keep horizontal context around an upload contour for lower-row OCR."""
+    x, y, width, height = bbox
+    frame_width = frame.shape[1]
+    padding = max(1, round(width * UPLOAD_HORIZONTAL_PADDING_RATIO))
+    left = max(0, x - padding)
+    right = min(frame_width, x + width + padding)
+    return frame[y : y + height, left:right], (left, y, right - left, height)
 
 
 def _detect_plate_with_max_area(frame, max_area_ratio):

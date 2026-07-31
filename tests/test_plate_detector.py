@@ -23,6 +23,8 @@ def test_upload_detects_smaller_plate_with_contours():
     assert crop is not None
     assert bbox is not None
     assert method == "Contour detection"
+    assert bbox[0] < 120
+    assert bbox[0] + bbox[2] > 280
 
 
 def test_upload_accepts_close_up_plate_occupying_most_of_image():

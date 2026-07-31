@@ -14,6 +14,7 @@ from uuid import uuid4
 import cv2
 
 MAX_TESSERACT_CALLS = 2
+MAX_OCR_SPACE_CALLS = 2
 OCR_BUDGET_SECONDS = 6.5
 TESSERACT_TIMEOUT_SECONDS = 3.0
 
@@ -67,37 +68,83 @@ class HTTPSOCRBackend:
     def read(self, plate_image, confidence_threshold=0.5):
         del confidence_threshold
         started = self._clock()
-        candidates = ()
+        candidates = []
+        variants = []
         selected = ""
         status = "request-failed"
         try:
-            encoded, payload = cv2.imencode(".jpg", plate_image)
-            if not encoded:
-                status = "image-encoding-failed"
-                return ""
-            request = self.provider.build_request(payload.tobytes())
-            response = self._transport(request, self.timeout_seconds)
-            candidates = self.provider.parse_response(response)
+            deadline = started + self.timeout_seconds
+            for variant_name, variant_image in _ocr_space_variants(plate_image)[
+                :MAX_OCR_SPACE_CALLS
+            ]:
+                remaining = deadline - self._clock()
+                if remaining <= 0:
+                    status = "timeout"
+                    break
+                encoded, payload = cv2.imencode(".jpg", variant_image)
+                if not encoded:
+                    variants.append(
+                        OCRVariantDiagnostics(
+                            variant_name, "", (), "image-encoding-failed"
+                        )
+                    )
+                    continue
+                try:
+                    request = self.provider.build_request(payload.tobytes())
+                    response = self._transport(request, remaining)
+                    response_candidates = self.provider.parse_response(response)
+                    raw_text = self.provider.sanitized_text(response)
+                    candidates.extend(response_candidates)
+                    variants.append(
+                        OCRVariantDiagnostics(
+                            variant_name,
+                            raw_text,
+                            tuple(item.text for item in response_candidates),
+                            "success",
+                        )
+                    )
+                except (TimeoutError, OCRTimeout):
+                    variants.append(
+                        OCRVariantDiagnostics(variant_name, "", (), "timeout")
+                    )
+                    status = "timeout"
+                    break
+                except HTTPError:
+                    variants.append(
+                        OCRVariantDiagnostics(variant_name, "", (), "http-error")
+                    )
+                except OCRProviderError:
+                    variants.append(
+                        OCRVariantDiagnostics(variant_name, "", (), "provider-error")
+                    )
+                except (
+                    json.JSONDecodeError,
+                    TypeError,
+                    AttributeError,
+                    KeyError,
+                    IndexError,
+                ):
+                    variants.append(
+                        OCRVariantDiagnostics(
+                            variant_name, "", (), "malformed-response"
+                        )
+                    )
+                except (URLError, OSError):
+                    variants.append(
+                        OCRVariantDiagnostics(variant_name, "", (), "network-error")
+                    )
             selected = _select_plate_candidate(candidates)
-            status = "success" if selected else "no-digits"
+            if selected:
+                status = "success"
+            elif status != "timeout":
+                status = (
+                    variants[-1].status
+                    if variants and all(item.status != "success" for item in variants)
+                    else "no-digits"
+                )
             return selected
-        except HTTPError:
-            status = "http-error"
-            return ""
-        except (TimeoutError, OCRTimeout):
-            status = "timeout"
-            return ""
-        except OCRProviderError:
-            status = "provider-error"
-            return ""
-        except (json.JSONDecodeError, TypeError, AttributeError, KeyError, IndexError):
-            status = "malformed-response"
-            return ""
         except ValueError:
             status = "configuration-error"
-            return ""
-        except (URLError, OSError):
-            status = "network-error"
             return ""
         finally:
             self.last_diagnostics = OCRDiagnostics(
@@ -110,6 +157,7 @@ class HTTPSOCRBackend:
                         item.text for item in candidates if len(item.text) <= 16
                     )
                 )[:10],
+                variants=tuple(variants),
             )
 
 
@@ -147,6 +195,7 @@ class OCRSpaceProvider:
                 ("isOverlayRequired", "false"),
                 ("scale", "true"),
                 ("detectOrientation", "true"),
+                ("OCREngine", "2"),
             ),
             "file",
             "plate.jpg",
@@ -186,6 +235,20 @@ class OCRSpaceProvider:
                 line_number += 1
         return tuple(candidates)
 
+    def sanitized_text(self, payload):
+        """Return bounded OCR text suitable for authenticated diagnostics."""
+        parsed_results = payload.get("ParsedResults", [])
+        text = "\n".join(
+            result.get("ParsedText", "")
+            for result in parsed_results
+            if isinstance(result, dict)
+        )
+        text = "".join(
+            character if character.isprintable() or character == "\n" else " "
+            for character in text
+        )
+        return text.strip()[:500]
+
 
 def _multipart_body(boundary, fields, file_field, filename, content_type, content):
     """Build one multipart request body without retaining or logging the image."""
@@ -222,15 +285,15 @@ def _select_plate_candidate(candidates):
     plausible = [candidate for candidate in candidates if len(candidate.text) in (3, 4)]
     if not plausible:
         return ""
-    # OCR.Space ParsedText preserves line order. Later plausible lines represent
-    # the lower plate row; length/area breaks ties in favour of the larger value.
+    # Japanese lower rows commonly contain four digits. Prefer an observed
+    # four-digit sequence, without synthesizing or padding a shorter reading.
     return max(
         plausible,
         key=lambda candidate: (
+            len(candidate.text) == 4,
             candidate.bottom is not None,
             candidate.bottom if candidate.bottom is not None else -1,
             candidate.area,
-            len(candidate.text),
         ),
     ).text
 
@@ -328,6 +391,33 @@ class OCRDiagnostics:
     raw_result: str
     uncertain: bool = False
     candidates: tuple[str, ...] = ()
+    variants: tuple["OCRVariantDiagnostics", ...] = ()
+
+
+@dataclass(frozen=True)
+class OCRVariantDiagnostics:
+    """Sanitized details for one bounded OCR.Space request."""
+
+    name: str
+    raw_text: str
+    candidates: tuple[str, ...]
+    status: str
+
+
+def _ocr_space_variants(plate_image):
+    """Build the two lightweight OCR.Space inputs without retaining either."""
+    height, width = plate_image.shape[:2]
+    full = cv2.resize(
+        plate_image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC
+    )
+    lower_top = int(height * 0.40)
+    lower = plate_image[lower_top:height, 0:width]
+    gray = lower if lower.ndim == 2 else cv2.cvtColor(lower, cv2.COLOR_BGR2GRAY)
+    enhanced = cv2.equalizeHist(gray)
+    enlarged = cv2.resize(
+        enhanced, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC
+    )
+    return (("full_2x", full), ("lower_60pct_contrast_3x", enlarged))
 
 
 def _prepare_candidate(plate_image, crop_name, preprocessing):

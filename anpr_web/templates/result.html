@@ -39,6 +39,10 @@
       <div><dt>Elapsed OCR time</dt><dd>{{ '%.2f'|format(result.ocr_diagnostics.elapsed_seconds) }} seconds</dd></div>
       <div><dt>Sanitized status</dt><dd>{{ result.ocr_diagnostics.attempt }}</dd></div>
       <div><dt>Normalized candidates</dt><dd>{{ result.ocr_diagnostics.candidates|join(', ') if result.ocr_diagnostics.candidates else '—' }}</dd></div>
+      <div><dt>Selected candidate</dt><dd>{{ result.ocr_diagnostics.raw_result or '—' }}</dd></div>
+      {% for variant in result.ocr_diagnostics.variants %}
+      <div><dt>{{ variant.name }}</dt><dd>Raw: {{ variant.raw_text or '—' }}; candidates: {{ variant.candidates|join(', ') if variant.candidates else '—' }}; status: {{ variant.status }}</dd></div>
+      {% endfor %}
     </dl>
   </section>
   {% endif %}
