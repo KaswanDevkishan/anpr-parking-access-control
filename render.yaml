@@ -2,36 +2,33 @@ services:
   - type: web
     name: anpr-access-decision-demo
     runtime: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wsgi:app
     healthCheckPath: /health
-    disk:
-      name: anpr-sqlite-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: ANPR_MATCHING_POLICY
         value: exact
       - key: ANPR_SQLITE_PATH
-        value: /var/data/anpr_web.sqlite3
+        value: /tmp/anpr_web.sqlite3
       - key: ANPR_TIMEZONE
         value: Asia/Tokyo
       - key: ANPR_CHECKPOINT_MODE
         value: selectable
       - key: ANPR_SECRET_KEY
-        generateValue: true
+        sync: false
       - key: ANPR_ADMIN_USERNAME
         sync: false
       - key: ANPR_ADMIN_PASSWORD_HASH
         sync: false
       - key: ANPR_EMAIL_ENABLED
-        value: "false"
+        value: "true"
       - key: ANPR_EMAIL_BACKEND
         value: smtp
       - key: ANPR_SMTP_HOST
-        sync: false
+        value: smtp.gmail.com
       - key: ANPR_SMTP_PORT
         value: "587"
       - key: ANPR_SMTP_USERNAME
@@ -44,6 +41,8 @@ services:
         sync: false
       - key: ANPR_EMAIL_FROM_NAME
         value: Example Campus Parking
+      - key: ANPR_APPLICATION_NAME
+        value: University Parking Demo
       - key: ANPR_EMAIL_TIMEOUT_SECONDS
         value: "5"
       - key: ANPR_PARKING_CAPACITY

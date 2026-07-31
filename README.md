@@ -193,12 +193,21 @@ names, and deleted after each request. Original and cropped image-registration
 images are not retained by default. Use only synthetic or properly consented
 images.
 
-Render is configured by `render.yaml`, including a persistent disk mounted at
-`/var/data`. SQLite changes disappear across restarts or redeployments without
-persistent storage; do not scale this SQLite deployment to multiple independent
-instances. Configure `ANPR_ADMIN_USERNAME` and
-`ANPR_ADMIN_PASSWORD_HASH` as secret environment values in Render. The
-production start command is:
+Render is configured by `render.yaml` as a free Python web service. Its SQLite
+database is created in writable ephemeral storage at `/tmp/anpr_web.sqlite3`;
+no persistent disk or paid resource is requested. When that file is absent, the
+application creates and migrates the schema automatically, then recreates the
+fictional seed vehicles from `data/vehicles.example.csv`.
+
+Free-tier storage is temporary: vehicles added through the admin may disappear
+after a restart or redeployment, and access history, notification-delivery
+records, and administrative audit records may reset. SMTP email configuration
+and real email sending remain functional because their settings come from
+environment variables rather than SQLite. Do not scale this SQLite deployment
+to multiple independent instances. Configure `ANPR_SECRET_KEY`,
+`ANPR_ADMIN_USERNAME`, `ANPR_ADMIN_PASSWORD_HASH`, `ANPR_SMTP_USERNAME`,
+`ANPR_SMTP_PASSWORD`, and `ANPR_EMAIL_FROM` as secret environment values in
+Render. The production start command is:
 
 ```bash
 gunicorn wsgi:app
@@ -260,10 +269,11 @@ destination, status, timestamps, and a generic error code; message bodies and
 SMTP responses are not stored. Provider configuration belongs in deployment
 secrets, never source files. See `/privacy` for the in-application summary.
 
-On Render, keep `ANPR_EMAIL_ENABLED=false` until all SMTP secret variables have
-been configured. The persistent `/var/data` disk is required for vehicle,
-visit, delivery, and audit records; ephemeral or multi-instance SQLite
-deployments can lose data or contend on writes.
+On Render, email is enabled by the Blueprint and becomes ready once the SMTP
+username, password, and sender secrets are configured. Email settings survive
+service restarts, but the free service's ephemeral SQLite vehicle, visit,
+delivery, and audit data does not. Fictional seed vehicles are recreated
+automatically whenever the database file is recreated.
 
 ## Limitations
 
