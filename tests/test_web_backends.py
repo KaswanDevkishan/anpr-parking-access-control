@@ -14,6 +14,8 @@ from anpr_web import create_app
 from anpr_web.mail import HTTPAPIBackend, SMTPBackend
 from anpr_web.ocr import (
     EasyOCRBackend,
+    GoogleCloudVisionProvider,
+    HTTPSOCRBackend,
     OCRTimeout,
     TesseractOCRBackend,
     _run_tesseract,
@@ -50,6 +52,124 @@ def test_health_and_normal_pages_do_not_initialize_ocr(tmp_path):
     for path in ("/", "/registered-vehicles", "/access-history", "/admin/login"):
         assert client.get(path).status_code == 200
     assert processor._backend is None
+
+
+def _vision_response(*annotations):
+    return {"responses": [{"textAnnotations": list(annotations)}]}
+
+
+def _annotation(text, left=0, top=0, right=100, bottom=20):
+    return {
+        "description": text,
+        "boundingPoly": {
+            "vertices": [
+                {"x": left, "y": top},
+                {"x": right, "y": top},
+                {"x": right, "y": bottom},
+                {"x": left, "y": bottom},
+            ]
+        },
+    }
+
+
+def _cloud_backend(response=None, error=None):
+    def transport(_request, _timeout):
+        if error:
+            raise error
+        return response
+
+    return HTTPSOCRBackend(
+        GoogleCloudVisionProvider(
+            "https://vision.googleapis.test/v1/images:annotate", "test-secret"
+        ),
+        transport=transport,
+    )
+
+
+def test_cloud_vision_success_returns_1238():
+    backend = _cloud_backend(_vision_response(_annotation("1238")))
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
+
+
+def test_cloud_vision_request_uses_text_detection_and_keeps_key_out_of_payload():
+    provider = GoogleCloudVisionProvider(
+        "https://vision.googleapis.test/v1/images:annotate", "test-secret"
+    )
+    request = provider.build_request(b"synthetic-image")
+    payload = json.loads(request.data)
+    assert payload["requests"][0]["features"] == [{"type": "TEXT_DETECTION"}]
+    assert payload["requests"][0]["image"]["content"]
+    assert request.headers["X-goog-api-key"] == "test-secret"
+    assert "test-secret" not in request.full_url
+    assert b"test-secret" not in request.data
+
+
+def test_cloud_vision_normalizes_full_width_digits():
+    backend = _cloud_backend(_vision_response(_annotation("１２３８")))
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
+
+
+def test_cloud_vision_prefers_plausible_large_bottom_row():
+    backend = _cloud_backend(
+        _vision_response(
+            _annotation("品川 500\nあ 12-38"),
+            _annotation("500", 20, 5, 60, 15),
+            _annotation("12", 10, 35, 30, 55),
+            _annotation("1238", 20, 60, 120, 95),
+        )
+    )
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == "1238"
+    assert backend.last_diagnostics.candidates == ("500", "12", "38", "1238")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError(),
+        __import__("urllib.error").error.HTTPError(
+            "https://redacted.invalid", 503, "unavailable", {}, None
+        ),
+    ],
+    ids=["timeout", "provider-error"],
+)
+def test_cloud_vision_network_failure_returns_empty_result(error):
+    backend = _cloud_backend(error=error)
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == ""
+    assert backend.last_diagnostics.raw_result == ""
+
+
+@pytest.mark.parametrize("payload", [{}, {"responses": []}, {"responses": "bad"}])
+def test_cloud_vision_malformed_response_returns_empty_result(payload):
+    backend = _cloud_backend(payload)
+    assert backend.read(np.zeros((20, 60, 3), dtype=np.uint8)) == ""
+
+
+def test_cloud_mode_is_lazy_and_does_not_load_or_run_local_ocr(monkeypatch, tmp_path):
+    sys.modules.pop("easyocr", None)
+    sys.modules.pop("torch", None)
+    process_calls = []
+    monkeypatch.setattr(
+        "anpr_web.ocr.subprocess.run",
+        lambda *_args, **_kwargs: process_calls.append(True),
+    )
+    app = create_app(
+        {
+            "TESTING": True,
+            "SQLITE_PATH": str(tmp_path / "cloud.sqlite3"),
+            "ANPR_WEB_OCR_BACKEND": "cloud-vision",
+            "ANPR_OCR_API_URL": "https://vision.googleapis.test/v1/images:annotate",
+            "ANPR_OCR_API_KEY": "never-render-this-key",
+        }
+    )
+    client = app.test_client()
+    for path in ("/health", "/", "/architecture"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert b"never-render-this-key" not in response.data
+    assert "easyocr" not in sys.modules
+    assert "torch" not in sys.modules
+    assert process_calls == []
+    assert app.extensions["anpr_processor"]._backend is None
 
 
 def test_tesseract_extracts_longest_mocked_digit_run(monkeypatch):

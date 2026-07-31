@@ -7,10 +7,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MKL_NUM_THREADS=1 \
     MALLOC_ARENA_MAX=2
 
-RUN apt-get update \
-    && apt-get install --no-install-recommends -y tesseract-ocr tesseract-ocr-eng \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 COPY requirements-web.txt .
 RUN pip install --no-cache-dir -r requirements-web.txt

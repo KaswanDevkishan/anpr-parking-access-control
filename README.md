@@ -16,8 +16,9 @@ The project deliberately keeps each processing concern small and independent:
 
 1. `main.py` captures frames and owns the display loop.
 2. `plate_detector.py` uses OpenCV contours to identify a plate-like rectangle.
-3. Raspberry Pi uses `ocr_engine.py` and EasyOCR; Flask selects a lazy OCR
-   adapter and uses digit-only Tesseract on the free cloud demo.
+3. Raspberry Pi uses `ocr_engine.py` and EasyOCR; Flask selects a lazy,
+   provider-neutral OCR adapter and uses Google Cloud Vision over HTTPS on the
+   free cloud demo. Tesseract remains an optional local fallback.
 4. `matcher.py` normalises results and applies exact authorization matching.
 5. `config.py` provides validated environment configuration and
    repository-relative paths.
@@ -31,7 +32,7 @@ The project deliberately keeps each processing concern small and independent:
 - Python 3.9+
 - OpenCV for camera input, image processing, contour detection, and overlays
 - EasyOCR for Raspberry Pi and local optical character recognition
-- Tesseract for lightweight digit OCR in the Render Free web container
+- Google Cloud Vision REST `TEXT_DETECTION` for hosted web OCR
 - NumPy for OpenCV/EasyOCR numerical operations
 - python-Levenshtein for optional experimental fuzzy matching
 - pytest and Ruff for automated checks
@@ -199,9 +200,11 @@ names, and deleted after each request. Original and cropped image-registration
 images are not retained by default. Use only synthetic or properly consented
 images.
 
-Render is configured by `render.yaml` as a free Docker web service. The image
-installs minimal Tesseract language data and lightweight web dependencies;
-EasyOCR and PyTorch are not installed. SQLite is created in writable ephemeral
+Render is configured by `render.yaml` as a free Docker web service. The
+lightweight image installs no OCR engine or model: EasyOCR, PyTorch, CUDA, and
+Tesseract are absent. Render only crops the detected image, calls the configured
+HTTPS OCR endpoint, normalizes candidates, and performs exact matching. SQLite
+is created in writable ephemeral
 storage at `/tmp/anpr_web.sqlite3`;
 no persistent disk or paid resource is requested. When that file is absent, the
 application creates and migrates the schema automatically, then recreates the
@@ -213,19 +216,27 @@ records, and administrative audit records may reset. HTTPS email API settings
 remain functional because their settings come from
 environment variables rather than SQLite. Do not scale this SQLite deployment
 to multiple independent instances. Configure `ANPR_SECRET_KEY`,
-`ANPR_ADMIN_USERNAME`, `ANPR_ADMIN_PASSWORD_HASH`, `ANPR_EMAIL_API_KEY`,
-`ANPR_EMAIL_API_URL`, and `ANPR_EMAIL_FROM` as secret environment values in
-Render. The production start command uses one worker, two threads, no preload,
-and conservative native-library thread limits:
+`ANPR_ADMIN_USERNAME`, `ANPR_ADMIN_PASSWORD_HASH`, `ANPR_OCR_API_KEY`,
+`ANPR_OCR_API_URL`, `ANPR_EMAIL_API_KEY`, `ANPR_EMAIL_API_URL`, and
+`ANPR_EMAIL_FROM` as secret environment values in Render. The production start
+command uses one worker, two threads, no preload, and conservative
+native-library thread limits:
 
 ```bash
 gunicorn --workers 1 --threads 2 --timeout 120 wsgi:app
 ```
 
 The service health check is available at `/health`. Health, normal pages, login,
-and history never initialize OCR; Tesseract starts only when a scan needs it.
-Local EasyOCR is also lazy-loaded. Keep `ANPR_MATCHING_POLICY=exact` for the
-public demo.
+and history never initialize OCR or call the provider. Cloud OCR is requested
+only for a detected crop during analysis or authenticated registration. Local
+EasyOCR and Tesseract are also lazy-loaded. Keep `ANPR_MATCHING_POLICY=exact`
+for the public demo.
+
+For Google Cloud Vision, enable the Vision API in a Google Cloud project,
+create a restricted API key, and set `ANPR_OCR_API_URL` to
+`https://vision.googleapis.com/v1/images:annotate`. Restrict the key to the
+Vision API and rotate it if it is ever exposed. The adapter sends the key in the
+`X-goog-api-key` request header and never renders provider payloads.
 
 ## Configuration
 
@@ -240,7 +251,10 @@ public demo.
 | `ANPR_SCREENSHOT_DIR` | `screenshots` | Local screenshot output |
 | `ANPR_COOLDOWN_SECONDS` | `3` | Repeat log cooldown |
 | `ANPR_MIN_OCR_LENGTH` | `3` | Minimum accepted OCR text length |
-| `ANPR_WEB_OCR_BACKEND` | `easyocr` | Flask OCR: `easyocr` locally or `tesseract` on Render Free |
+| `ANPR_WEB_OCR_BACKEND` | `easyocr` | Flask OCR: `cloud-vision` on Render, `easyocr` locally, or optional local `tesseract` |
+| `ANPR_OCR_API_URL` | Empty | Google Cloud Vision HTTPS annotate endpoint; configure as a Render secret |
+| `ANPR_OCR_API_KEY` | Empty | Google Cloud Vision API key; configure as a Render secret |
+| `ANPR_OCR_TIMEOUT_SECONDS` | `5` | Short positive cloud OCR request timeout |
 | `ANPR_WEB_TEMP_DIR` | OS temporary directory | Ephemeral web upload directory |
 | `ANPR_SQLITE_PATH` | `data/anpr_web.sqlite3` | Flask vehicle database path |
 | `ANPR_TIMEZONE` | `Asia/Tokyo` | IANA timezone used for display and local-date reporting |
@@ -354,8 +368,8 @@ gunicorn --check-config wsgi:app
 ## Description
 
 > Built a modular Python ANPR access-decision prototype using OpenCV,
-> Raspberry Pi EasyOCR, and lightweight web Tesseract, with an unchanged
-> Raspberry Pi CSV workflow and a Flask/SQLite
+> unchanged Raspberry Pi EasyOCR, and provider-neutral HTTPS cloud OCR, with an
+> unchanged Raspberry Pi CSV workflow and a Flask/SQLite
 > portfolio application featuring exact active-record authorization,
 > privacy-aware uploads, admin authentication, CSRF protection, and explicit
 > vehicle lifecycle management.

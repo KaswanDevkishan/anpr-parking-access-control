@@ -64,12 +64,14 @@ class WebProcessor:
         ocr=None,
         ocr_loader=None,
         backend_name="easyocr",
+        backend_options=None,
     ):
         self.config = runtime_config
         self.detector = detector
         self.ocr = ocr
         self.ocr_loader = ocr_loader
         self.backend_name = backend_name
+        self.backend_options = backend_options or {}
         self._backend = None
         self._reader = None
         self._scan_guard = threading.Lock()
@@ -84,7 +86,9 @@ class WebProcessor:
                 confidence_threshold=self.config.ocr_confidence_threshold,
             )
         if self._backend is None:
-            self._backend = create_web_ocr_backend(self.backend_name)
+            self._backend = create_web_ocr_backend(
+                self.backend_name, **self.backend_options
+            )
         return self._backend.read(
             plate_image,
             confidence_threshold=self.config.ocr_confidence_threshold,

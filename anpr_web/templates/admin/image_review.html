@@ -18,9 +18,10 @@
 <section class="panel" aria-label="Private OCR diagnostics">
   <h2>OCR diagnostics</h2>
   <dl class="facts">
-    <div><dt>Attempt used</dt><dd>{{ review.ocr_diagnostics.attempt or 'Timed out before OCR' }}</dd></div>
+    <div><dt>OCR provider</dt><dd>{{ review.ocr_diagnostics.backend }}</dd></div>
     <div><dt>Elapsed OCR time</dt><dd>{{ '%.2f'|format(review.ocr_diagnostics.elapsed_seconds) }} seconds</dd></div>
-    <div><dt>Raw normalized result</dt><dd><code>{{ review.ocr_diagnostics.raw_result or '—' }}</code></dd></div>
+    <div><dt>Normalized result</dt><dd><code>{{ review.ocr_diagnostics.raw_result or '—' }}</code></dd></div>
+    <div><dt>Candidate numbers</dt><dd>{{ review.ocr_diagnostics.candidates|join(', ') if review.ocr_diagnostics.candidates else '—' }}</dd></div>
   </dl>
 </section>
 {% endif %}

@@ -8,7 +8,13 @@ services:
     healthCheckPath: /health
     envVars:
       - key: ANPR_WEB_OCR_BACKEND
-        value: tesseract
+        value: cloud-vision
+      - key: ANPR_OCR_API_URL
+        sync: false
+      - key: ANPR_OCR_API_KEY
+        sync: false
+      - key: ANPR_OCR_TIMEOUT_SECONDS
+        value: "5"
       - key: ANPR_MATCHING_POLICY
         value: exact
       - key: ANPR_SQLITE_PATH

@@ -81,6 +81,11 @@ def create_app(test_config=None, processor=None):
         ANPR_WEB_OCR_BACKEND=os.environ.get("ANPR_WEB_OCR_BACKEND", "easyocr")
         .strip()
         .lower(),
+        ANPR_OCR_API_URL=os.environ.get("ANPR_OCR_API_URL", "").strip(),
+        ANPR_OCR_API_KEY=os.environ.get("ANPR_OCR_API_KEY", ""),
+        ANPR_OCR_TIMEOUT_SECONDS=os.environ.get(
+            "ANPR_OCR_TIMEOUT_SECONDS", "5"
+        ).strip(),
         CAMERA_SAMPLE_INTERVAL_SECONDS=0.75,
         CAMERA_STABLE_SAMPLES=3,
         CAMERA_SESSION_TIMEOUT_SECONDS=30,
@@ -119,6 +124,12 @@ def create_app(test_config=None, processor=None):
     except ValueError:
         app.config["ANPR_EMAIL_TIMEOUT_SECONDS"] = 5
         warning = "ANPR_EMAIL_TIMEOUT_SECONDS must be a positive integer."
+    try:
+        app.config["ANPR_OCR_TIMEOUT_SECONDS"] = _positive_int(
+            app.config["ANPR_OCR_TIMEOUT_SECONDS"], "ANPR_OCR_TIMEOUT_SECONDS"
+        )
+    except ValueError:
+        app.config["ANPR_OCR_TIMEOUT_SECONDS"] = 5
     if app.config["ANPR_EMAIL_ENABLED"]:
         backend_name = app.config["ANPR_EMAIL_BACKEND"]
         if warning:
@@ -154,8 +165,14 @@ def create_app(test_config=None, processor=None):
     )
     if runtime_config.matching_policy != "exact":
         raise ValueError("The public web demo requires exact matching")
-    if app.config["ANPR_WEB_OCR_BACKEND"] not in {"easyocr", "tesseract"}:
-        raise ValueError("ANPR_WEB_OCR_BACKEND must be 'easyocr' or 'tesseract'")
+    if app.config["ANPR_WEB_OCR_BACKEND"] not in {
+        "cloud-vision",
+        "easyocr",
+        "tesseract",
+    }:
+        raise ValueError(
+            "ANPR_WEB_OCR_BACKEND must be 'cloud-vision', 'easyocr', or 'tesseract'"
+        )
 
     if app.testing:
         app.config["SESSION_COOKIE_SECURE"] = False
@@ -165,7 +182,13 @@ def create_app(test_config=None, processor=None):
     app.extensions["anpr_store"] = store
     app.extensions["anpr_runtime_config"] = runtime_config
     app.extensions["anpr_processor"] = processor or WebProcessor(
-        runtime_config, backend_name=app.config["ANPR_WEB_OCR_BACKEND"]
+        runtime_config,
+        backend_name=app.config["ANPR_WEB_OCR_BACKEND"],
+        backend_options={
+            "api_url": app.config["ANPR_OCR_API_URL"],
+            "api_key": app.config["ANPR_OCR_API_KEY"],
+            "timeout_seconds": app.config["ANPR_OCR_TIMEOUT_SECONDS"],
+        },
     )
     app.extensions["anpr_login_attempts"] = {}
     app.extensions["anpr_camera_samples"] = {}
