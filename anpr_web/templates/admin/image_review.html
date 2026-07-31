@@ -14,6 +14,17 @@
   {% endif %}
 </div>
 {% if review.error %}<div class="error" role="alert">{{ review.error }}</div>{% endif %}
+{% if review.ocr_diagnostics %}
+<section class="panel" aria-label="Private OCR diagnostics">
+  <h2>OCR diagnostics</h2>
+  <dl class="facts">
+    <div><dt>Selected candidate</dt><dd>{{ review.ocr_diagnostics.selected.digits if review.ocr_diagnostics.selected else '—' }}</dd></div>
+    <div><dt>Selected crop</dt><dd>{{ review.ocr_diagnostics.selected.crop if review.ocr_diagnostics.selected else '—' }}</dd></div>
+    <div><dt>Vote counts</dt><dd>{% for digits, count in review.ocr_diagnostics.vote_counts %}<code>{{ digits }}</code>: {{ count }}{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</dd></div>
+    <div><dt>Alternatives</dt><dd>{% for digits, count in review.ocr_diagnostics.alternatives %}<code>{{ digits }}</code> ({{ count }}){% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</dd></div>
+  </dl>
+</section>
+{% endif %}
 {% endif %}
 {% if errors %}<div class="error" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
 <form class="panel form-stack" method="post" action="{{ url_for('web.admin_confirm_image_vehicle') }}">

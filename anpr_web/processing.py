@@ -33,6 +33,7 @@ class ProcessingResult:
     match: dict | None
     annotated_image: str
     detection_method: str | None = None
+    ocr_uncertain: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class ImageReview:
     ocr_text: str
     detection_method: str | None
     error: str | None
+    ocr_diagnostics: object | None = None
 
 
 class WebProcessor:
@@ -81,6 +83,9 @@ class WebProcessor:
             confidence_threshold=self.config.ocr_confidence_threshold,
         )
 
+    def _ocr_diagnostics(self):
+        return getattr(self._backend, "last_diagnostics", None)
+
     def process(self, image_path, database):
         frame = cv2.imread(str(image_path))
         if frame is None:
@@ -108,6 +113,8 @@ class WebProcessor:
 
         ocr_text = self._read_plate(plate_image).strip()
 
+        diagnostics = self._ocr_diagnostics()
+        uncertain = bool(diagnostics and diagnostics.uncertain)
         usable = len(ocr_text) >= self.config.min_ocr_length
         match = (
             find_match(
@@ -116,11 +123,13 @@ class WebProcessor:
                 policy=self.config.matching_policy,
                 tolerance=self.config.match_tolerance,
             )
-            if usable
+            if usable and not uncertain
             else None
         )
         allowed = match is not None
-        if not usable:
+        if uncertain:
+            reason = "OCR uncertain: competing readings had similar support."
+        elif not usable:
             reason = "A plate region was found, but OCR returned no usable number."
         elif allowed:
             reason = "The OCR result exactly matches a fictional demo record."
@@ -135,6 +144,7 @@ class WebProcessor:
             match,
             _encode_image(annotated),
             detection_method,
+            uncertain,
         )
 
     def review(self, image_path):
@@ -154,8 +164,11 @@ class WebProcessor:
             )
 
         ocr_text = self._read_plate(plate_image).strip()
+        diagnostics = self._ocr_diagnostics()
         error = None
-        if len(ocr_text) < self.config.min_ocr_length:
+        if diagnostics and diagnostics.uncertain:
+            error = "OCR uncertain. Correct the plate number manually before saving."
+        elif len(ocr_text) < self.config.min_ocr_length:
             ocr_text = ""
             error = "OCR returned no usable number. Enter the plate manually."
         return ImageReview(
@@ -164,6 +177,7 @@ class WebProcessor:
             ocr_text,
             detection_method,
             error,
+            diagnostics,
         )
 
 

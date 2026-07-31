@@ -24,7 +24,7 @@
     </figure>
     <dl class="facts">
       <div><dt>Detection method</dt><dd>{{ result.detection_method or '—' }}</dd></div>
-      <div><dt>OCR result</dt><dd>{% if result.ocr_text %}<code class="plate-badge">{{ result.ocr_text }}</code>{% else %}No usable number{% endif %}</dd></div>
+      <div><dt>OCR result</dt><dd>{% if result.ocr_uncertain %}OCR uncertain{% elif result.ocr_text %}<code class="plate-badge">{{ result.ocr_text }}</code>{% else %}No usable number{% endif %}</dd></div>
       <div><dt>Matched plate</dt><dd>{% if result.match %}<code class="plate-badge">{{ result.match.matched_plate }}</code>{% else %}—{% endif %}</dd></div>
       <div><dt>Edit distance</dt><dd>{{ result.match.distance if result.match else '—' }}</dd></div>
       <div><dt>Demo owner</dt><dd>{{ result.match.name if result.match else '—' }}</dd></div>

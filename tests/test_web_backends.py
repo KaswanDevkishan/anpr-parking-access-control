@@ -1,6 +1,7 @@
 import json
 import sys
 from email.message import EmailMessage
+from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
@@ -8,7 +9,12 @@ import numpy as np
 
 from anpr_web import create_app
 from anpr_web.mail import HTTPAPIBackend, SMTPBackend
-from anpr_web.ocr import EasyOCRBackend, TesseractOCRBackend
+from anpr_web.ocr import (
+    EasyOCRBackend,
+    OCRCandidate,
+    TesseractOCRBackend,
+    _select_candidate,
+)
 from anpr_web.processing import WebProcessor
 
 
@@ -119,6 +125,83 @@ def test_tesseract_tries_multiple_page_segmentation_modes(monkeypatch):
 def test_tesseract_no_usable_digits_stays_empty(monkeypatch):
     _mock_tesseract_pipeline(monkeypatch, {})
     assert TesseractOCRBackend().read(np.zeros((40, 120, 3), dtype=np.uint8)) == ""
+
+
+def candidate(digits, variant, crop="lower_balanced", psm=7):
+    return OCRCandidate(digits, crop, variant, psm)
+
+
+def test_candidate_voting_selects_1238_from_several_variants():
+    selected, uncertain, votes = _select_candidate(
+        [
+            candidate("1238", "grayscale_2x"),
+            candidate("1238", "otsu_3x"),
+            candidate("1238", "adaptive_4x", psm=13),
+            candidate("1236", "inverted_otsu_3x"),
+        ]
+    )
+    assert selected.digits == "1238"
+    assert votes == {"1238": 3, "1236": 1}
+    assert not uncertain
+
+
+def test_candidate_voting_returns_uncertain_for_equal_support():
+    selected, uncertain, votes = _select_candidate(
+        [
+            candidate("1236", "grayscale_2x"),
+            candidate("1238", "otsu_3x"),
+        ]
+    )
+    assert selected.digits in {"1236", "1238"}
+    assert votes == {"1236": 1, "1238": 1}
+    assert uncertain
+
+
+def test_segmented_digit_fallback_is_counted_as_an_independent_vote(monkeypatch):
+    image = np.zeros((40, 120, 3), dtype=np.uint8)
+    monkeypatch.setattr(
+        "anpr_web.ocr._plate_crops", lambda _image: (("lower_balanced", image),)
+    )
+    variants = (
+        ("grayscale_2x", np.zeros((2, 2), dtype=np.uint8)),
+        ("otsu_3x", np.ones((2, 2), dtype=np.uint8)),
+    )
+    monkeypatch.setattr("anpr_web.ocr._preprocessing_variants", lambda _image: variants)
+    monkeypatch.setattr(
+        "anpr_web.ocr._run_tesseract",
+        lambda variant, psm: (
+            "1238"
+            if (variant[0, 0] == 0 and psm == 6)
+            else "1236"
+            if (variant[0, 0] == 1 and psm == 7)
+            else ""
+        ),
+    )
+    monkeypatch.setattr(
+        "anpr_web.ocr._segmented_digit_candidate", lambda _image: "1238"
+    )
+
+    backend = TesseractOCRBackend()
+    assert backend.read(image) == "1238"
+    assert dict(backend.last_diagnostics.vote_counts) == {"1238": 2, "1236": 1}
+    assert any(
+        item.crop == "segmented_bottom_row"
+        for item in backend.last_diagnostics.candidates
+    )
+
+
+def test_render_memory_safe_configuration_is_unchanged():
+    render_config = (Path(__file__).resolve().parents[1] / "render.yaml").read_text(
+        encoding="utf-8"
+    )
+    for setting in (
+        "gunicorn --workers 1 --threads 2",
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "MALLOC_ARENA_MAX",
+    ):
+        assert setting in render_config
 
 
 def test_exact_authorization_occurs_only_after_ocr_returns_registered_number(
