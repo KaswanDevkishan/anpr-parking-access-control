@@ -649,6 +649,9 @@ def test_camera_rejects_corrupted_duplicate_and_oversized_frames(app_factory):
 def test_theme_and_camera_fallbacks_render(client):
     base = client.get("/")
     assert b'class="theme-toggle"' in base.data
+    assert b'<meta name="viewport" content="width=device-width, initial-scale=1">' in base.data
+    assert b'class="nav-toggle"' in base.data
+    assert b'aria-controls="main-navigation"' in base.data
     assert b"prefers-color-scheme" in base.data
     assert b"localStorage" in base.data
     login(client)
@@ -658,6 +661,26 @@ def test_theme_and_camera_fallbacks_render(client):
     javascript = client.get("/static/camera.js")
     assert b"getUserMedia" in javascript.data
     assert b"image upload" in camera.data and b"manual registration" in camera.data
+
+
+def test_priority_tables_include_mobile_card_labels(client):
+    vehicles = client.get("/registered-vehicles")
+    history = client.get("/access-history")
+
+    assert b'class="table-wrap card-table-wrap"' in vehicles.data
+    assert b'data-label="Plate number"' in vehicles.data
+    assert b'data-label="Status"' in vehicles.data
+    assert b'class="table-wrap card-table-wrap"' in history.data
+    history_template = Path("anpr_web/templates/history.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'data-label="Entry"' in history_template
+    assert 'data-label="Duration"' in history_template
+
+    css = client.get("/static/styles.css").get_data(as_text=True)
+    for breakpoint in ("1024px", "768px", "480px"):
+        assert f"@media (max-width: {breakpoint})" in css
+    assert ".card-table td::before" in css
 
 
 def test_theme_aware_button_colors_are_defined_and_used(client):

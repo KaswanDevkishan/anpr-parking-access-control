@@ -17,7 +17,12 @@
 <body>
   <header class="site-header">
     <a class="brand" href="{{ url_for('web.index') }}">ANPR<span>/lab</span></a>
-    <nav aria-label="Main navigation">
+    <button class="nav-toggle" type="button" aria-expanded="false"
+            aria-controls="main-navigation">
+      <span class="nav-toggle-icon" aria-hidden="true"></span>
+      <span class="sr-only">Open navigation</span>
+    </button>
+    <nav id="main-navigation" aria-label="Main navigation">
       <a href="{{ url_for('web.index') }}">Demo</a>
       <a href="{{ url_for('web.registered_vehicles') }}">Registered Vehicles</a>
       <a href="{{ url_for('web.access_history') }}">Access History</a>
@@ -40,6 +45,8 @@
   <script>
     (() => {
       const button = document.querySelector(".theme-toggle");
+      const navToggle = document.querySelector(".nav-toggle");
+      const navigation = document.querySelector("#main-navigation");
       const update = () => {
         const dark = document.documentElement.dataset.theme === "dark";
         button.setAttribute("aria-label", `Switch to ${dark ? "light" : "dark"} theme`);
@@ -52,6 +59,20 @@
         update();
       });
       update();
+
+      const closeNavigation = () => {
+        navToggle.setAttribute("aria-expanded", "false");
+        navToggle.querySelector(".sr-only").textContent = "Open navigation";
+      };
+      navToggle.addEventListener("click", () => {
+        const open = navToggle.getAttribute("aria-expanded") === "true";
+        navToggle.setAttribute("aria-expanded", String(!open));
+        navToggle.querySelector(".sr-only").textContent = open ? "Open navigation" : "Close navigation";
+      });
+      navigation.addEventListener("click", (event) => {
+        if (event.target.closest("a")) closeNavigation();
+      });
+      matchMedia("(min-width: 769px)").addEventListener("change", closeNavigation);
     })();
   </script>
   {% block scripts %}{% endblock %}

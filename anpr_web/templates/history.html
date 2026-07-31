@@ -31,12 +31,12 @@
   <a href="{{ url_for('web.admin_history_export', q=search, status=selected_status, date_from=date_from, date_to=date_to) }}">Export filtered CSV</a>
 </div>
 {% endif %}
-<div class="table-wrap">
-  <table>
+<div class="table-wrap card-table-wrap">
+  <table class="card-table">
     <thead><tr><th>Plate</th><th>Display name</th><th>Category</th><th>Entry</th><th>Exit</th><th>Duration</th><th>Status</th>{% if is_admin %}<th>Email delivery</th>{% endif %}</tr></thead>
     <tbody>
     {% for visit in records %}
-      <tr><td><code class="plate-badge">{{ visit.plate_number }}</code>{% if visit.vehicle_record_status %}<br><small>{{ visit.vehicle_record_status }}</small>{% endif %}</td><td>{{ visit.display_name }}</td><td>{{ visit.category|title }}</td><td>{{ visit.entry_time }}</td><td>{{ visit.exit_time }}</td><td>{{ visit.duration }}</td><td><span class="status {{ visit.status|lower }}">{{ visit.status }}</span></td>{% if is_admin %}<td><span class="delivery-badge {{ visit.delivery_status|lower|replace(' ', '-') }}">{{ visit.delivery_status }}</span>{% if visit.delivery_status == 'Failed' %}<form class="inline-form" method="post" action="{{ url_for('web.admin_retry_notification', delivery_id=visit.delivery_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Retry email</button></form>{% endif %}</td>{% endif %}</tr>
+      <tr><td data-label="Plate"><code class="plate-badge">{{ visit.plate_number }}</code>{% if visit.vehicle_record_status %}<br><small>{{ visit.vehicle_record_status }}</small>{% endif %}</td><td data-label="Display name">{{ visit.display_name }}</td><td data-label="Category">{{ visit.category|title }}</td><td data-label="Entry">{{ visit.entry_time }}</td><td data-label="Exit">{{ visit.exit_time }}</td><td data-label="Duration">{{ visit.duration }}</td><td data-label="Status"><span class="status {{ visit.status|lower }}">{{ visit.status }}</span></td>{% if is_admin %}<td data-label="Email delivery"><span class="delivery-badge {{ visit.delivery_status|lower|replace(' ', '-') }}">{{ visit.delivery_status }}</span>{% if visit.delivery_status == 'Failed' %}<form class="inline-form" method="post" action="{{ url_for('web.admin_retry_notification', delivery_id=visit.delivery_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Retry email</button></form>{% endif %}</td>{% endif %}</tr>
     {% else %}
       <tr><td colspan="{{ 8 if is_admin else 7 }}">No fictional visits match these filters.</td></tr>
     {% endfor %}
