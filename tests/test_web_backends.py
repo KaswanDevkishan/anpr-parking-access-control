@@ -1,21 +1,24 @@
 import json
+import subprocess
 import sys
+import threading
 from email.message import EmailMessage
 from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
 import numpy as np
+import pytest
 
 from anpr_web import create_app
 from anpr_web.mail import HTTPAPIBackend, SMTPBackend
 from anpr_web.ocr import (
     EasyOCRBackend,
-    OCRCandidate,
+    OCRTimeout,
     TesseractOCRBackend,
-    _select_candidate,
+    _run_tesseract,
 )
-from anpr_web.processing import WebProcessor
+from anpr_web.processing import ScannerBusy, WebProcessor
 
 
 def test_tesseract_selection_does_not_import_heavy_ocr_modules(tmp_path):
@@ -58,136 +61,136 @@ def test_tesseract_extracts_longest_mocked_digit_run(monkeypatch):
     assert TesseractOCRBackend().read(image) == "3456"
 
 
-def _mock_tesseract_pipeline(monkeypatch, outputs):
-    monkeypatch.setattr(
-        "anpr_web.ocr._plate_crops",
-        lambda image: (("full", image), ("lower_55_percent", image)),
-    )
-    monkeypatch.setattr(
-        "anpr_web.ocr._preprocessing_variants",
-        lambda image: (
-            (name, np.full((2, 2), index, dtype=np.uint8))
-            for index, name in enumerate(
-                ("grayscale", "enlarged", "otsu", "inverted_otsu", "adaptive")
-            )
-        ),
-    )
-    crop_calls = {"count": 0}
-
-    def fake_run(image, psm):
-        pass_index = crop_calls["count"]
-        crop_calls["count"] += 1
-        crop = "full" if pass_index < len(TesseractOCRBackend.PASSES) else "lower"
-        variant = (
-            "grayscale",
-            "enlarged",
-            "otsu",
-            "inverted_otsu",
-            "adaptive",
-        )[int(image[0, 0])]
-        return outputs.get((crop, variant, psm), "")
-
-    monkeypatch.setattr("anpr_web.ocr._run_tesseract", fake_run)
-
-
-def test_tesseract_uses_lower_crop_when_full_image_is_empty(monkeypatch):
-    _mock_tesseract_pipeline(monkeypatch, {("lower", "grayscale", 6): "1238"})
-    backend = TesseractOCRBackend()
-    assert backend.read(np.zeros((40, 120, 3), dtype=np.uint8)) == "1238"
-    assert backend.last_diagnostics.selected.crop == "lower_55_percent"
-
-
-def test_tesseract_prefers_four_digit_lower_row_over_top_classification(monkeypatch):
-    _mock_tesseract_pipeline(
-        monkeypatch,
-        {
-            ("full", "grayscale", 6): "338",
-            ("lower", "grayscale", 6): "1238",
-        },
-    )
-    assert TesseractOCRBackend().read(np.zeros((40, 120, 3), dtype=np.uint8)) == "1238"
-
-
-def test_tesseract_inverted_threshold_can_succeed(monkeypatch):
-    _mock_tesseract_pipeline(monkeypatch, {("lower", "inverted_otsu", 8): "1238"})
-    backend = TesseractOCRBackend()
-    assert backend.read(np.zeros((40, 120, 3), dtype=np.uint8)) == "1238"
-    assert backend.last_diagnostics.selected.preprocessing == "inverted_otsu"
-
-
-def test_tesseract_tries_multiple_page_segmentation_modes(monkeypatch):
-    _mock_tesseract_pipeline(monkeypatch, {("lower", "otsu", 13): "1238"})
-    backend = TesseractOCRBackend()
-    assert backend.read(np.zeros((40, 120, 3), dtype=np.uint8)) == "1238"
-    assert backend.last_diagnostics.selected.psm == 13
-
-
-def test_tesseract_no_usable_digits_stays_empty(monkeypatch):
-    _mock_tesseract_pipeline(monkeypatch, {})
-    assert TesseractOCRBackend().read(np.zeros((40, 120, 3), dtype=np.uint8)) == ""
-
-
-def candidate(digits, variant, crop="lower_balanced", psm=7):
-    return OCRCandidate(digits, crop, variant, psm)
-
-
-def test_candidate_voting_selects_1238_from_several_variants():
-    selected, uncertain, votes = _select_candidate(
-        [
-            candidate("1238", "grayscale_2x"),
-            candidate("1238", "otsu_3x"),
-            candidate("1238", "adaptive_4x", psm=13),
-            candidate("1236", "inverted_otsu_3x"),
-        ]
-    )
-    assert selected.digits == "1238"
-    assert votes == {"1238": 3, "1236": 1}
-    assert not uncertain
-
-
-def test_candidate_voting_returns_uncertain_for_equal_support():
-    selected, uncertain, votes = _select_candidate(
-        [
-            candidate("1236", "grayscale_2x"),
-            candidate("1238", "otsu_3x"),
-        ]
-    )
-    assert selected.digits in {"1236", "1238"}
-    assert votes == {"1236": 1, "1238": 1}
-    assert uncertain
-
-
-def test_segmented_digit_fallback_is_counted_as_an_independent_vote(monkeypatch):
+def test_tesseract_never_exceeds_three_calls(monkeypatch):
     image = np.zeros((40, 120, 3), dtype=np.uint8)
-    monkeypatch.setattr(
-        "anpr_web.ocr._plate_crops", lambda _image: (("lower_balanced", image),)
-    )
-    variants = (
-        ("grayscale_2x", np.zeros((2, 2), dtype=np.uint8)),
-        ("otsu_3x", np.ones((2, 2), dtype=np.uint8)),
-    )
-    monkeypatch.setattr("anpr_web.ocr._preprocessing_variants", lambda _image: variants)
+    calls = []
     monkeypatch.setattr(
         "anpr_web.ocr._run_tesseract",
-        lambda variant, psm: (
-            "1238"
-            if (variant[0, 0] == 0 and psm == 6)
-            else "1236"
-            if (variant[0, 0] == 1 and psm == 7)
-            else ""
-        ),
-    )
-    monkeypatch.setattr(
-        "anpr_web.ocr._segmented_digit_candidate", lambda _image: "1238"
+        lambda candidate, psm, timeout: calls.append((psm, timeout)) or "",
     )
 
-    backend = TesseractOCRBackend()
-    assert backend.read(image) == "1238"
-    assert dict(backend.last_diagnostics.vote_counts) == {"1238": 2, "1236": 1}
-    assert any(
-        item.crop == "segmented_bottom_row"
-        for item in backend.last_diagnostics.candidates
+    assert TesseractOCRBackend().read(image) == ""
+    assert len(calls) == 3
+    assert [psm for psm, _timeout in calls] == [7, 7, 13]
+    assert all(0 < timeout <= 1.2 for _psm, timeout in calls)
+
+
+def test_tesseract_early_success_stops_later_calls(monkeypatch):
+    calls = []
+
+    def fake_run(_candidate, _psm, timeout):
+        calls.append(timeout)
+        return "1238"
+
+    monkeypatch.setattr("anpr_web.ocr._run_tesseract", fake_run)
+    image = np.zeros((40, 120, 3), dtype=np.uint8)
+    assert TesseractOCRBackend().read(image) == "1238"
+    assert len(calls) == 1
+
+
+def test_total_ocr_deadline_stops_before_another_call(monkeypatch):
+    now = [0.0]
+    calls = []
+
+    def fake_run(_candidate, _psm, timeout):
+        calls.append(timeout)
+        now[0] += 2.0
+        return ""
+
+    monkeypatch.setattr("anpr_web.ocr._run_tesseract", fake_run)
+    backend = TesseractOCRBackend(clock=lambda: now[0])
+    image = np.zeros((40, 120, 3), dtype=np.uint8)
+    with pytest.raises(OCRTimeout):
+        backend.read(image)
+    assert len(calls) == 2
+
+
+def test_subprocess_timeout_is_converted_to_ocr_timeout(monkeypatch):
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired("tesseract", 1.2)
+
+    monkeypatch.setattr("anpr_web.ocr.subprocess.run", timeout)
+    with pytest.raises(OCRTimeout):
+        _run_tesseract(np.zeros((10, 10), dtype=np.uint8), 7, 1.2)
+
+
+def test_processor_timeout_returns_normal_result(tmp_path):
+    processor, image_path = _blocking_processor(
+        tmp_path, lambda *_args, **_kwargs: (_ for _ in ()).throw(OCRTimeout())
     )
+    result = processor.process(image_path, {})
+    assert result.status == "NOT ALLOWED"
+    assert (
+        result.reason
+        == "OCR timed out. Please try a clearer or more tightly cropped image."
+    )
+
+
+def _blocking_processor(tmp_path, ocr):
+    image_path = tmp_path / "scan.png"
+    cv2.imwrite(str(image_path), np.zeros((20, 60, 3), dtype=np.uint8))
+    runtime = SimpleNamespace(
+        ocr_confidence_threshold=0.5,
+        min_ocr_length=3,
+        matching_policy="exact",
+        match_tolerance=0,
+    )
+    processor = WebProcessor(
+        runtime,
+        detector=lambda frame: (frame, (0, 0, 60, 20), "test"),
+        ocr=ocr,
+    )
+    return processor, image_path
+
+
+def test_simultaneous_scan_returns_scanner_busy(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_ocr(*_args, **_kwargs):
+        started.set()
+        release.wait(2)
+        return ""
+
+    processor, image_path = _blocking_processor(tmp_path, slow_ocr)
+    first = threading.Thread(target=processor.process, args=(image_path, {}))
+    first.start()
+    assert started.wait(1)
+    try:
+        with pytest.raises(ScannerBusy, match="Scanner busy, try again shortly"):
+            processor.process(image_path, {})
+    finally:
+        release.set()
+        first.join(2)
+
+
+def test_health_responds_while_ocr_is_slow(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_ocr(*_args, **_kwargs):
+        started.set()
+        release.wait(2)
+        return ""
+
+    processor, image_path = _blocking_processor(tmp_path, slow_ocr)
+    app = create_app(
+        {
+            "TESTING": True,
+            "SQLITE_PATH": str(tmp_path / "health.sqlite3"),
+        },
+        processor=processor,
+    )
+    scan = threading.Thread(target=processor.process, args=(image_path, {}))
+    scan.start()
+    assert started.wait(1)
+    try:
+        response = app.test_client().get("/health")
+        assert response.status_code == 200
+        assert response.json["status"] == "ok"
+    finally:
+        release.set()
+        scan.join(2)
 
 
 def test_render_memory_safe_configuration_is_unchanged():

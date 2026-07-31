@@ -2,6 +2,7 @@
 
 import base64
 import os
+import threading
 import uuid
 from dataclasses import dataclass
 from io import BytesIO
@@ -14,13 +15,17 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from matcher import find_match
 from plate_detector import detect_plate_for_upload
 
-from .ocr import create_web_ocr_backend
+from .ocr import OCRTimeout, create_web_ocr_backend
 
 ALLOWED_FORMATS = {"JPEG": ".jpg", "PNG": ".png"}
 
 
 class InvalidImage(ValueError):
     """Raised when an upload is not a supported, decodable image."""
+
+
+class ScannerBusy(RuntimeError):
+    """Raised rather than queueing behind an OCR scan already in progress."""
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,7 @@ class WebProcessor:
         self.backend_name = backend_name
         self._backend = None
         self._reader = None
+        self._scan_guard = threading.Lock()
 
     def _read_plate(self, plate_image):
         if self.ocr is not None:
@@ -87,6 +93,14 @@ class WebProcessor:
         return getattr(self._backend, "last_diagnostics", None)
 
     def process(self, image_path, database):
+        if not self._scan_guard.acquire(blocking=False):
+            raise ScannerBusy("Scanner busy, try again shortly")
+        try:
+            return self._process(image_path, database)
+        finally:
+            self._scan_guard.release()
+
+    def _process(self, image_path, database):
         frame = cv2.imread(str(image_path))
         if frame is None:
             raise InvalidImage("The uploaded image could not be decoded.")
@@ -111,7 +125,17 @@ class WebProcessor:
                 None,
             )
 
-        ocr_text = self._read_plate(plate_image).strip()
+        try:
+            ocr_text = self._read_plate(plate_image).strip()
+        except OCRTimeout:
+            return ProcessingResult(
+                "NOT ALLOWED",
+                "OCR timed out. Please try a clearer or more tightly cropped image.",
+                "",
+                None,
+                _encode_image(_annotate(frame, bbox, False)),
+                detection_method,
+            )
 
         diagnostics = self._ocr_diagnostics()
         uncertain = bool(diagnostics and diagnostics.uncertain)
@@ -149,6 +173,14 @@ class WebProcessor:
 
     def review(self, image_path):
         """Detect and OCR an upload without making or storing a decision."""
+        if not self._scan_guard.acquire(blocking=False):
+            raise ScannerBusy("Scanner busy, try again shortly")
+        try:
+            return self._review(image_path)
+        finally:
+            self._scan_guard.release()
+
+    def _review(self, image_path):
         frame = cv2.imread(str(image_path))
         if frame is None:
             raise InvalidImage("The uploaded image could not be decoded.")
@@ -163,7 +195,16 @@ class WebProcessor:
                 "No plate-like region was found. Enter the plate manually.",
             )
 
-        ocr_text = self._read_plate(plate_image).strip()
+        try:
+            ocr_text = self._read_plate(plate_image).strip()
+        except OCRTimeout:
+            return ImageReview(
+                _encode_image(frame),
+                _encode_image(plate_image),
+                "",
+                detection_method,
+                "OCR timed out. Please try a clearer or more tightly cropped image.",
+            )
         diagnostics = self._ocr_diagnostics()
         error = None
         if diagnostics and diagnostics.uncertain:

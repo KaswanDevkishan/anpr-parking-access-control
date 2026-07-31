@@ -24,7 +24,12 @@ from matcher import normalise_plate
 
 from .database import CATEGORIES, VehicleCurrentlyInside
 from .mail import VisitSummary, mask_email, mask_plate, parse_utc
-from .processing import InvalidImage, remove_temporary_file, save_validated_upload
+from .processing import (
+    InvalidImage,
+    ScannerBusy,
+    remove_temporary_file,
+    save_validated_upload,
+)
 from .security import (
     LOGIN_SESSION_KEY,
     admin_required,
@@ -69,6 +74,11 @@ def analyse():
         )
     except InvalidImage as exc:
         return render_template("index.html", error=str(exc)), 400
+    except ScannerBusy:
+        return (
+            render_template("index.html", error="Scanner busy, try again shortly"),
+            503,
+        )
     finally:
         remove_temporary_file(temporary_path)
 
@@ -316,6 +326,14 @@ def admin_vehicle_from_image():
         review = current_app.extensions["anpr_processor"].review(temporary_path)
     except InvalidImage as exc:
         return render_template("admin/image_upload.html", error=str(exc)), 400
+    except ScannerBusy:
+        return (
+            render_template(
+                "admin/image_upload.html",
+                error="Scanner busy, try again shortly",
+            ),
+            503,
+        )
     finally:
         remove_temporary_file(temporary_path)
     values = vehicle_form_values({"plate_number": review.ocr_text, "is_active": "1"})
@@ -385,6 +403,11 @@ def admin_camera_frame():
         review = current_app.extensions["anpr_processor"].review(temporary_path)
     except InvalidImage as exc:
         return jsonify(status="error", message=str(exc)), 400
+    except ScannerBusy:
+        return (
+            jsonify(status="busy", message="Scanner busy, try again shortly"),
+            503,
+        )
     finally:
         remove_temporary_file(temporary_path)
 

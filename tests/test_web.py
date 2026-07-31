@@ -11,7 +11,13 @@ from werkzeug.security import generate_password_hash
 from anpr_web import create_app
 from anpr_web.database import VehicleStore
 from anpr_web.mail import HTTPAPIBackend
-from anpr_web.processing import ImageReview, ProcessingResult, WebProcessor
+from anpr_web.ocr import OCRTimeout
+from anpr_web.processing import (
+    ImageReview,
+    ProcessingResult,
+    ScannerBusy,
+    WebProcessor,
+)
 from config import load_config
 
 CSRF_PATTERN = re.compile(rb'name="csrf_token" value="([^"]+)"')
@@ -457,6 +463,28 @@ def test_demo_distinguishes_no_region_from_empty_ocr(app_factory, runtime_config
     empty_ocr = pipeline_processor(runtime_config, "")
     response = post_image(app_factory(empty_ocr).test_client())
     assert b"OCR returned no usable number" in response.data
+
+
+def test_ocr_timeout_returns_styled_http_response(app_factory, runtime_config):
+    def timed_out(*_args, **_kwargs):
+        raise OCRTimeout
+
+    processor = pipeline_processor(runtime_config, "")
+    processor.ocr = timed_out
+    response = post_image(app_factory(processor).test_client())
+    assert response.status_code == 200
+    assert (
+        b"OCR timed out. Please try a clearer or more tightly cropped image."
+        in response.data
+    )
+
+
+def test_scanner_busy_returns_normal_service_unavailable_page(app_factory):
+    processor = StubProcessor()
+    processor.process = lambda *_args: (_ for _ in ()).throw(ScannerBusy())
+    response = post_image(app_factory(processor).test_client())
+    assert response.status_code == 503
+    assert b"Scanner busy, try again shortly" in response.data
 
 
 def pipeline_processor(runtime_config, ocr_text):
